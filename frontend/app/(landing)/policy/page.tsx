@@ -100,7 +100,7 @@ export default function PrivacyPage() {
           <p>
             You can remove passkeys and sign out at any time from your profile. To delete your
             account and all associated data, including chat history and synthetic demo data,
-            email <a href="mailto:niheshr03@gmail.com">niheshr03@gmail.com</a> and we will action
+            email <a href="mailto:sarathi@niheshr.com">sarathi@niheshr.com</a> and we will action
             the request promptly.
           </p>
 
@@ -119,7 +119,7 @@ export default function PrivacyPage() {
           <h2>11. Contact</h2>
           <p>
             Questions about your data or this policy: write to{" "}
-            <a href="mailto:niheshr03@gmail.com">niheshr03@gmail.com</a>.
+            <a href="mailto:sarathi@niheshr.com">sarathi@niheshr.com</a>.
           </p>
         </div>
       </div>

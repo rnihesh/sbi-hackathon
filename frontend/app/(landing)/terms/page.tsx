@@ -91,7 +91,7 @@ export default function TermsPage() {
           <h2>9. Contact</h2>
           <p>
             Questions about these terms, or anything else about Sarathi? Write to{" "}
-            <a href="mailto:niheshr03@gmail.com">niheshr03@gmail.com</a>.
+            <a href="mailto:sarathi@niheshr.com">sarathi@niheshr.com</a>.
           </p>
         </div>
       </div>
