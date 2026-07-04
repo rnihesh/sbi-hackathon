@@ -31,7 +31,9 @@ async def test_demo_activity_fills_account_then_409(
     resp = await client.post("/api/v1/me/demo-activity", cookies=auth_cookies(user))
     assert resp.status_code == 200
     body = resp.json()
-    assert body["transactions"] > 100  # 6 months of realistic activity
+    # 6 months of realistic activity; even the sparsest archetype (retiree)
+    # clears this floor, keeping the test stable across random customer ids.
+    assert body["transactions"] > 20
     assert body["months"] == 6
     assert body["balance_paise"] >= 0
 

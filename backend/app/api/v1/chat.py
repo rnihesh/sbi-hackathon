@@ -204,7 +204,8 @@ async def post_chat_message(
             else:
                 await agen.aclose()
 
-    return EventSourceResponse(event_source(), ping=15)
+    # X-Accel-Buffering tells nginx-family proxies to never buffer this stream.
+    return EventSourceResponse(event_source(), ping=15, headers={"X-Accel-Buffering": "no"})
 
 
 @router.get("/sessions", response_model=ChatSessionListResponse)

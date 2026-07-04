@@ -42,7 +42,10 @@ router = APIRouter(prefix="/me", tags=["customers"])
 
 _MONTHS = 6
 _BURST_TXNS = 15
-_ALREADY_LOADED_THRESHOLD = 50
+# Lowest-activity personas (retiree, homemaker) still exceed this over 6 months;
+# anything above it means history was already loaded (or the user is a real,
+# active customer who does not need demo data).
+_ALREADY_LOADED_THRESHOLD = 20
 
 
 class DemoActivityResponse(BaseModel):
