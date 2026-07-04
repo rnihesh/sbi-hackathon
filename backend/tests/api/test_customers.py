@@ -176,3 +176,196 @@ async def test_preferences_404_without_customer_profile(
         cookies=auth_cookies(user),
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PATCH /me/preferences (profile fields: full_name, phone, city)
+# ---------------------------------------------------------------------------
+
+
+async def test_preferences_updates_full_name(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Old Name")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"full_name": "  New Name  "},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["full_name"] == "New Name"
+
+
+async def test_preferences_rejects_short_full_name(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Old Name")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"full_name": "A"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 422
+
+
+async def test_preferences_rejects_full_name_too_long(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Old Name")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"full_name": "A" * 81},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 422
+
+
+async def test_preferences_rejects_null_full_name(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Old Name")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"full_name": None},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 422
+
+
+async def test_preferences_updates_phone(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, customer = await make_customer(full_name="Phone User")
+    assert customer.phone is None
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"phone": "9876543210"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["phone"] == "9876543210"
+
+
+async def test_preferences_accepts_phone_with_country_code(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Phone User 2")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"phone": "+91-9876543210"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["phone"] == "+91-9876543210"
+
+
+async def test_preferences_rejects_invalid_phone(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Phone User 3")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"phone": "12345"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 422
+
+
+async def test_preferences_clears_phone_with_null(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Phone User 4", phone="9876543210")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"phone": None},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["phone"] is None
+
+
+async def test_preferences_updates_city(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="City User")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"city": "  Pune  "},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["city"] == "Pune"
+
+
+async def test_preferences_rejects_short_city(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="City User 2")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"city": "P"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 422
+
+
+async def test_preferences_clears_city_with_null(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="City User 3", city="Mumbai")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"city": None},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["city"] is None
+
+
+async def test_preferences_partial_update_only_touches_provided_fields(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(
+        full_name="Partial User", phone="9876543210", city="Chennai", preferred_language="tamil"
+    )
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"city": "Bengaluru"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["city"] == "Bengaluru"
+    # Untouched fields survive the partial update unchanged.
+    assert body["full_name"] == "Partial User"
+    assert body["phone"] == "9876543210"
+    assert body["preferred_language"] == "tamil"
+
+
+async def test_preferences_updates_multiple_fields_at_once(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Multi User")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"full_name": "Multi Updated", "phone": "9123456780", "city": "Delhi"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["full_name"] == "Multi Updated"
+    assert body["phone"] == "9123456780"
+    assert body["city"] == "Delhi"

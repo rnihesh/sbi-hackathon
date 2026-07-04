@@ -15,9 +15,12 @@ interface MessageBubbleProps {
   message: ChatMessage
   onRetry?: () => void
   onOfferCta?: (offer: ProductOffer) => void
+  /** Current chat thread id - only consumed by walkthrough structured cards,
+   * for their localStorage persistence key. */
+  conversationId?: string | null
 }
 
-function MessageBubbleImpl({ message, onRetry, onOfferCta }: MessageBubbleProps) {
+function MessageBubbleImpl({ message, onRetry, onOfferCta, conversationId }: MessageBubbleProps) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -89,7 +92,12 @@ function MessageBubbleImpl({ message, onRetry, onOfferCta }: MessageBubbleProps)
           </div>
         )}
         {message.structured?.map((payload, index) => (
-          <StructuredCard key={index} payload={payload} onOfferCta={onOfferCta} />
+          <StructuredCard
+            key={index}
+            payload={payload}
+            onOfferCta={onOfferCta}
+            conversationId={conversationId}
+          />
         ))}
         {hasStreamError && (
           <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">
@@ -133,7 +141,8 @@ function messageBubblePropsEqual(prev: MessageBubbleProps, next: MessageBubblePr
     a.streamError === b.streamError &&
     a.retryText === b.retryText &&
     a.toolActivity === b.toolActivity &&
-    a.structured === b.structured
+    a.structured === b.structured &&
+    prev.conversationId === next.conversationId
   )
 }
 

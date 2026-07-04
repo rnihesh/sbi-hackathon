@@ -77,18 +77,30 @@ async def get_dashboard(
     )
 
 
-@router.patch("/preferences", response_model=CustomerOut, summary="Update chat preferences")
+@router.patch("/preferences", response_model=CustomerOut, summary="Update profile and preferences")
 async def update_preferences(
     payload: PreferencesUpdateRequest,
     user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> CustomerOut:
-    """Set (or clear, with ``null``) the customer's chat language preference.
+    """Partially update the customer's profile fields and chat preferences.
 
-    Clearing it returns Sarathi to "auto": agents reply in whatever language
-    the customer writes in.
+    Only fields present in the request body are touched - a client can PATCH
+    just ``{"city": "Pune"}`` without clobbering name/phone/language. ``phone``
+    and ``city`` accept explicit ``null`` to clear; so does
+    ``preferred_language`` (returns Sarathi to "auto": agents reply in
+    whatever language the customer writes in). ``full_name`` cannot be
+    cleared - the column is not nullable.
     """
     customer = await _customer_for_user_or_404(db, user)
-    customer.preferred_language = payload.preferred_language
+    fields_set = payload.model_fields_set
+    if "preferred_language" in fields_set:
+        customer.preferred_language = payload.preferred_language
+    if "full_name" in fields_set and payload.full_name is not None:
+        customer.full_name = payload.full_name
+    if "phone" in fields_set:
+        customer.phone = payload.phone
+    if "city" in fields_set:
+        customer.city = payload.city
     await db.flush()
     return CustomerOut.model_validate(customer)

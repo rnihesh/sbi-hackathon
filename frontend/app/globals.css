@@ -183,6 +183,27 @@
   }
 }
 
+/* Mic button while voice input is listening - a quiet clay ring pulse. */
+@keyframes mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklch, var(--primary) 0%, transparent);
+  }
+}
+
+.mic-listening {
+  animation: mic-pulse 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mic-listening {
+    animation: none;
+  }
+}
+
 /* Chat markdown - Aperture-matched typography (clay links, mono code/numbers). */
 .prose-sarathi {
   --tw-prose-body: var(--foreground);

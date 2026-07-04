@@ -41,3 +41,27 @@ export const CHAT_PLACEHOLDER_HINTS: Record<string, string> = {
   bengali: "আপনার টাকা সম্পর্কে সারথীকে যা খুশি জিজ্ঞাসা করুন",
   marathi: "तुमच्या पैशांबद्दल सारथीला काहीही विचारा",
 }
+
+/** BCP-47 tag for the browser's `SpeechRecognition.lang`, derived from the
+ * same preference value used for chat replies. Hinglish has no distinct
+ * speech locale of its own, so - like "auto"/unset and plain English - it
+ * maps to Indian English, which recognizes code-switched Hindi-English
+ * speech reasonably well. */
+export function preferredLanguageToBcp47(preferredLanguage?: string | null): string {
+  switch (preferredLanguage) {
+    case "hindi":
+      return "hi-IN"
+    case "telugu":
+      return "te-IN"
+    case "tamil":
+      return "ta-IN"
+    case "kannada":
+      return "kn-IN"
+    case "bengali":
+      return "bn-IN"
+    case "marathi":
+      return "mr-IN"
+    default:
+      return "en-IN"
+  }
+}

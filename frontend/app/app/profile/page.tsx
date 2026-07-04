@@ -15,6 +15,7 @@ import {
   Languages,
   LogOut,
   Moon,
+  Pencil,
   ShieldCheck,
   Smartphone,
   Sun,
@@ -26,6 +27,7 @@ import { api, API_V1, describeApiError } from "@/lib/api"
 import { useMe, type CustomerOut } from "@/lib/auth"
 import { useTheme } from "next-themes"
 import { springSoft } from "@/lib/motion"
+import { cn } from "@/lib/utils"
 import { formatRelativeTime, humanizeIdentifier } from "@/lib/format"
 import { LANGUAGE_OPTIONS, languageLabel } from "@/lib/languages"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -78,6 +80,52 @@ function initialsFor(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
+// --- Inline profile field editing -------------------------------------------
+// Name/phone/city are edited in place (pencil -> input -> save/cancel) against
+// `PATCH /me/preferences`. Email is the auth identity and stays read-only.
+
+type EditableField = "full_name" | "phone" | "city"
+
+const FIELD_LABELS: Record<EditableField, string> = {
+  full_name: "Name",
+  phone: "Phone",
+  city: "City",
+}
+
+// Mirrors the backend's validation (`app/schemas/customer.py`) so a bad value
+// gets an inline message immediately instead of a round trip for it.
+const INDIAN_MOBILE_RE = /^(?:\+91[-\s]?|0)?[6-9]\d{9}$/
+
+function validateEditValue(
+  field: EditableField,
+  raw: string
+): { value: string | null } | { error: string } {
+  const trimmed = raw.trim()
+  if (field === "full_name") {
+    if (trimmed.length < 2 || trimmed.length > 80) {
+      return { error: "Name must be 2-80 characters" }
+    }
+    return { value: trimmed }
+  }
+  if (field === "phone") {
+    if (trimmed === "") return { value: null }
+    if (!INDIAN_MOBILE_RE.test(trimmed)) {
+      return { error: "Enter a valid Indian mobile number" }
+    }
+    return { value: trimmed }
+  }
+  // city
+  if (trimmed === "") return { value: null }
+  if (trimmed.length < 2 || trimmed.length > 40) {
+    return { error: "City must be 2-40 characters" }
+  }
+  return { value: trimmed }
+}
+
+type ProfileRow =
+  | { kind: "static"; label: string; value: string | null }
+  | { kind: "editable"; field: EditableField; value: string | null; placeholder: string }
+
 export default function ProfilePage() {
   const router = useRouter()
   const { me, setMe, logout } = useMe()
@@ -88,6 +136,11 @@ export default function ProfilePage() {
   const [pendingRemoval, setPendingRemoval] = React.useState<PasskeyCredential | null>(null)
   const [removingPasskey, setRemovingPasskey] = React.useState(false)
   const [languagePending, setLanguagePending] = React.useState(false)
+  const [editingField, setEditingField] = React.useState<EditableField | null>(null)
+  const [editValue, setEditValue] = React.useState("")
+  const [editError, setEditError] = React.useState<string | null>(null)
+  const [savingField, setSavingField] = React.useState<EditableField | null>(null)
+  const editInputRef = React.useRef<HTMLInputElement>(null)
 
   React.useEffect(() => setMounted(true), [])
 
@@ -106,19 +159,171 @@ export default function ProfilePage() {
     void loadPasskeys()
   }, [loadPasskeys])
 
+  React.useEffect(() => {
+    if (editingField) {
+      editInputRef.current?.focus()
+      editInputRef.current?.select()
+    }
+  }, [editingField])
+
   if (!me) return null
 
   const displayName = me.customer?.full_name ?? me.user.email
   const isDark = mounted && resolvedTheme === "dark"
 
-  const profileFields: Array<[string, string | null]> = [
-    ["Email", me.user.email],
-    ["Phone", me.customer?.phone ?? null],
-    ["City", me.customer?.city ?? null],
-    ["State", me.customer?.state ?? null],
-    ["Segment", me.customer?.segment ? humanizeIdentifier(me.customer.segment) : null],
-    ["Digital maturity", me.customer ? humanizeIdentifier(me.customer.digital_maturity) : null],
-  ]
+  const profileRows: ProfileRow[] = []
+  if (me.customer) {
+    profileRows.push({ kind: "editable", field: "full_name", value: me.customer.full_name, placeholder: "Add your name" })
+  }
+  profileRows.push({ kind: "static", label: "Email", value: me.user.email })
+  if (me.customer) {
+    profileRows.push({ kind: "editable", field: "phone", value: me.customer.phone, placeholder: "Add phone number" })
+    profileRows.push({ kind: "editable", field: "city", value: me.customer.city, placeholder: "Add city" })
+  }
+  profileRows.push({ kind: "static", label: "State", value: me.customer?.state ?? null })
+  profileRows.push({
+    kind: "static",
+    label: "Segment",
+    value: me.customer?.segment ? humanizeIdentifier(me.customer.segment) : null,
+  })
+  profileRows.push({
+    kind: "static",
+    label: "Digital maturity",
+    value: me.customer ? humanizeIdentifier(me.customer.digital_maturity) : null,
+  })
+  const visibleRows = profileRows.filter((row) => row.kind === "editable" || row.value !== null)
+
+  function startEdit(field: EditableField, currentValue: string | null) {
+    setEditingField(field)
+    setEditValue(currentValue ?? "")
+    setEditError(null)
+  }
+
+  function cancelEdit() {
+    setEditingField(null)
+    setEditError(null)
+  }
+
+  function handleEditKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      void commitEdit()
+    } else if (e.key === "Escape") {
+      e.preventDefault()
+      cancelEdit()
+    }
+  }
+
+  async function commitEdit() {
+    const currentMe = me
+    if (!editingField || !currentMe?.customer) return
+    const field = editingField
+    const customer = currentMe.customer
+    const validated = validateEditValue(field, editValue)
+    if ("error" in validated) {
+      setEditError(validated.error)
+      return
+    }
+
+    let nextCustomer: CustomerOut
+    let patchBody: Record<string, string | null>
+    let unchanged: boolean
+    if (field === "full_name") {
+      const value = validated.value ?? customer.full_name
+      nextCustomer = { ...customer, full_name: value }
+      patchBody = { full_name: value }
+      unchanged = value === customer.full_name
+    } else if (field === "phone") {
+      nextCustomer = { ...customer, phone: validated.value }
+      patchBody = { phone: validated.value }
+      unchanged = validated.value === customer.phone
+    } else {
+      nextCustomer = { ...customer, city: validated.value }
+      patchBody = { city: validated.value }
+      unchanged = validated.value === customer.city
+    }
+
+    setEditingField(null)
+    setEditError(null)
+    if (unchanged) return
+
+    setSavingField(field)
+    // Optimistic: show the new value immediately, roll back on failure.
+    setMe({ ...currentMe, customer: nextCustomer })
+    try {
+      const updated = await api.patch<CustomerOut>(`${API_V1}/me/preferences`, patchBody)
+      setMe({ ...currentMe, customer: updated })
+      toast.success(`${FIELD_LABELS[field]} updated`)
+    } catch (err) {
+      setMe(currentMe)
+      toast.error(describeApiError(err, `Couldn't update ${FIELD_LABELS[field].toLowerCase()}`))
+    } finally {
+      setSavingField(null)
+    }
+  }
+
+  function renderEditableRow(field: EditableField, value: string | null, placeholder: string) {
+    const label = FIELD_LABELS[field]
+    const isEditing = editingField === field
+    const isSaving = savingField === field
+
+    if (!isEditing) {
+      return (
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <span className="text-sm text-muted-foreground">{label}</span>
+          <div className="flex items-center gap-1">
+            <span
+              className={cn(
+                "text-sm font-medium",
+                !value && "font-normal text-muted-foreground italic"
+              )}
+            >
+              {value ?? placeholder}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              disabled={isSaving}
+              onClick={() => startEdit(field, value)}
+              aria-label={`Edit ${label}`}
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex flex-col gap-1.5 px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-muted-foreground">{label}</span>
+          <div className="flex flex-1 items-center justify-end gap-1">
+            <input
+              ref={editInputRef}
+              type={field === "phone" ? "tel" : "text"}
+              value={editValue}
+              onChange={(e) => {
+                setEditValue(e.target.value)
+                if (editError) setEditError(null)
+              }}
+              onKeyDown={handleEditKeyDown}
+              aria-label={`Edit ${label}`}
+              aria-invalid={editError ? true : undefined}
+              className="w-full min-w-0 max-w-48 rounded-md border border-input bg-background px-2 py-1 text-right text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/50"
+            />
+            <Button variant="ghost" size="icon-sm" onClick={() => void commitEdit()} aria-label="Save">
+              <Check className="size-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={cancelEdit} aria-label="Cancel">
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+        {editError && <p className="text-right text-xs text-destructive">{editError}</p>}
+      </div>
+    )
+  }
 
   async function handleAddPasskey() {
     setAddingPasskey(true)
@@ -208,17 +413,19 @@ export default function ProfilePage() {
         </div>
 
         <div className="rounded-xl border border-border">
-          {profileFields
-            .filter(([, value]) => value)
-            .map(([label, value], i, arr) => (
-              <div key={label}>
+          {visibleRows.map((row, i) => (
+            <div key={row.kind === "editable" ? row.field : row.label}>
+              {row.kind === "editable" ? (
+                renderEditableRow(row.field, row.value, row.placeholder)
+              ) : (
                 <div className="flex items-center justify-between px-4 py-3">
-                  <span className="text-sm text-muted-foreground">{label}</span>
-                  <span className="text-sm font-medium">{value}</span>
+                  <span className="text-sm text-muted-foreground">{row.label}</span>
+                  <span className="text-sm font-medium">{row.value}</span>
                 </div>
-                {i < arr.length - 1 && <Separator />}
-              </div>
-            ))}
+              )}
+              {i < visibleRows.length - 1 && <Separator />}
+            </div>
+          ))}
         </div>
 
         {me.is_staff && (
