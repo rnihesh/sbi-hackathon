@@ -1,4 +1,7 @@
+import Link from "next/link"
 import { ShieldAlert } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
 
 export function StaffRequiredPanel() {
   return (
@@ -11,6 +14,9 @@ export function StaffRequiredPanel() {
         This console is reserved for Sarathi relationship-manager staff. Sign in with a
         staff account, or reach out to your administrator for access.
       </p>
+      <Button asChild size="sm" variant="outline" className="mt-2">
+        <Link href="/app/home">Back to your account</Link>
+      </Button>
     </div>
   )
 }

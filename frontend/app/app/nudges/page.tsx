@@ -3,29 +3,46 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 import { AnimatePresence } from "framer-motion"
-import { PartyPopper } from "lucide-react"
+import { PartyPopper, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError } from "@/lib/api"
 import { ctaUrl } from "@/lib/customer-types"
-import type { Nudge } from "@/lib/customer-types"
+import type { DashboardResponse, Nudge } from "@/lib/customer-types"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NudgeCard } from "@/components/customer/nudge-card"
 
+/** While a demo-activity load (or the sim engine) is still working through the
+ * event pipeline, transactions exist before the worker has produced any
+ * nudges from them yet. Re-poll gently during that gap instead of leaving the
+ * "all caught up" empty state up, which reads as "nothing will ever show up"
+ * rather than "still thinking." */
+const ANALYZING_POLL_MS = 20_000
+
 export default function NudgesPage() {
   const router = useRouter()
   const [nudges, setNudges] = React.useState<Nudge[] | null>(null)
+  const [hasActivity, setHasActivity] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [busyIds, setBusyIds] = React.useState<Set<string>>(new Set())
   const seenSentRef = React.useRef<Set<string>>(new Set())
 
+  const loadNudges = React.useCallback(async () => {
+    const res = await api.get<{ nudges: Nudge[] }>(`${API_V1}/me/nudges`)
+    return res.nudges.filter((n) => n.status !== "dismissed" && n.status !== "acted")
+  }, [])
+
   React.useEffect(() => {
     let cancelled = false
-    api
-      .get<{ nudges: Nudge[] }>(`${API_V1}/me/nudges`)
-      .then((res) => {
-        if (!cancelled) setNudges(res.nudges.filter((n) => n.status !== "dismissed" && n.status !== "acted"))
+    Promise.all([
+      loadNudges(),
+      api.get<DashboardResponse>(`${API_V1}/me/dashboard`).catch(() => null),
+    ])
+      .then(([nextNudges, dashboard]) => {
+        if (cancelled) return
+        setNudges(nextNudges)
+        setHasActivity((dashboard?.recent_transactions.length ?? 0) > 0)
       })
       .catch((err) => {
         if (cancelled) return
@@ -35,7 +52,24 @@ export default function NudgesPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loadNudges])
+
+  // Sarathi's nudge-generating agents run async off the event stream - if
+  // there's activity but nothing to show yet, keep checking quietly rather
+  // than making the customer refresh the page themselves.
+  React.useEffect(() => {
+    if (!hasActivity || nudges === null || nudges.length > 0) return
+    const interval = setInterval(() => {
+      loadNudges()
+        .then((next) => {
+          if (next.length > 0) setNudges(next)
+        })
+        .catch(() => {
+          // Transient poll failure - the next tick will retry.
+        })
+    }, ANALYZING_POLL_MS)
+    return () => clearInterval(interval)
+  }, [hasActivity, nudges, loadNudges])
 
   function setBusy(id: string, value: boolean) {
     setBusyIds((prev) => {
@@ -116,15 +150,28 @@ export default function NudgesPage() {
           ))}
         </div>
       ) : nudges.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <div className="flex size-12 items-center justify-center rounded-full bg-muted">
-            <PartyPopper className="size-5 text-muted-foreground" />
+        hasActivity ? (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+              <Sparkles className="size-5 animate-pulse text-muted-foreground" />
+            </div>
+            <p className="text-sm font-medium">Sarathi is analyzing your activity</p>
+            <p className="max-w-xs text-sm text-muted-foreground">
+              New nudges usually show up within a few minutes of fresh activity. This page will
+              update on its own - no need to refresh.
+            </p>
           </div>
-          <p className="text-sm font-medium">All caught up</p>
-          <p className="max-w-xs text-sm text-muted-foreground">
-            No nudges right now - Sarathi will let you know when something&apos;s worth a look.
-          </p>
-        </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+              <PartyPopper className="size-5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-medium">All caught up</p>
+            <p className="max-w-xs text-sm text-muted-foreground">
+              No nudges right now - Sarathi will let you know when something&apos;s worth a look.
+            </p>
+          </div>
+        )
       ) : (
         <div className="flex flex-col gap-3">
           <AnimatePresence initial={false}>

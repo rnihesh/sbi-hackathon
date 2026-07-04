@@ -1,11 +1,22 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { AnimatePresence, motion } from "framer-motion"
 import { startRegistration } from "@simplewebauthn/browser"
 import type { PublicKeyCredentialCreationOptionsJSON } from "@simplewebauthn/browser"
-import { Fingerprint, KeyRound, LogOut, Moon, Smartphone, Sun, X } from "lucide-react"
+import {
+  ChevronRight,
+  Fingerprint,
+  KeyRound,
+  LogOut,
+  Moon,
+  ShieldCheck,
+  Smartphone,
+  Sun,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError } from "@/lib/api"
@@ -178,6 +189,26 @@ export default function ProfilePage() {
               </div>
             ))}
         </div>
+
+        {me.is_staff && (
+          <div className="flex flex-col gap-3 md:hidden">
+            <h2 className="text-sm font-medium text-muted-foreground">Staff</h2>
+            <Card>
+              <CardContent>
+                <Link
+                  href="/console"
+                  className="flex items-center justify-between gap-3 text-sm font-medium"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <ShieldCheck className="size-4 text-muted-foreground" />
+                    Admin console
+                  </span>
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                </Link>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         <div className="flex flex-col gap-3">
           <h2 className="text-sm font-medium text-muted-foreground">Security</h2>

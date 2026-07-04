@@ -33,6 +33,7 @@ export interface CustomerOut {
 export interface MeResponse {
   user: UserOut
   customer: CustomerOut | null
+  is_staff: boolean
 }
 
 export type AuthStatus = "loading" | "authenticated" | "anonymous"

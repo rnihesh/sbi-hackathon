@@ -68,12 +68,19 @@ export function MessageBubble({
           </div>
         )}
         {hasContent && (
-          <div className="rounded-2xl rounded-bl-sm bg-muted/60 px-4 py-2.5 text-sm">
+          <div className="min-w-0 rounded-2xl rounded-bl-sm bg-muted/60 px-4 py-2.5 text-sm break-words">
             <div className="prose-sarathi prose prose-sm max-w-none dark:prose-invert">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
                   a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+                  // GFM tables can be wider than the chat bubble - scroll the
+                  // table itself instead of blowing out the layout.
+                  table: ({ ...props }) => (
+                    <div className="overflow-x-auto rounded-lg border border-border">
+                      <table {...props} />
+                    </div>
+                  ),
                 }}
               >
                 {message.content}
