@@ -24,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.agents import compliance_terms
 from app.models.audit import GENESIS_HASH, AuditLog, chain_hash
 
 # ===========================================================================
@@ -107,23 +108,10 @@ _INSURANCE_DISCLOSURE = (
     "Please read the policy terms and conditions carefully."
 )
 
-_INVESTMENT_KEYWORDS = (
-    "mutual fund", "mutual funds", " sip", "sip ", "equity", "market-linked",
-    "market linked", "elss", "portfolio", "wealth", "invest",
-)
-_INSURANCE_KEYWORDS = ("insurance", "term plan", "life cover", "policy premium", "accident cover")
-
-# Disallowed marketing claims → compliant rewrite.
-_BLOCKED_CLAIMS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"guaranteed\s+returns?", re.I), "potential returns (subject to market risk)"),
-    (re.compile(r"assured\s+returns?", re.I), "indicative returns (not assured)"),
-    (re.compile(r"guaranteed\s+profits?", re.I), "possible gains (not guaranteed)"),
-    (re.compile(r"zero[\s\-]*risk", re.I), "lower-risk"),
-    (re.compile(r"risk[\s\-]*free", re.I), "lower-risk"),
-    (re.compile(r"\bno\s+risk\b", re.I), "reduced risk"),
-    (re.compile(r"100%\s*safe", re.I), "designed to be low-risk"),
-    (re.compile(r"\bdouble\s+your\s+money\b", re.I), "grow your money over time"),
-]
+# Investment / insurance trigger vocabulary and disallowed-claim rewrites live in
+# ``compliance_terms`` - one deterministic, per-language table so a native-script
+# reply (Devanagari, Telugu, Tamil, ...) cannot skip a mandated disclosure or
+# smuggle a "guaranteed returns" claim past the block.
 
 # Phrases that indicate an active investment *suggestion* (triggers suitability).
 _SUGGESTION_RE = re.compile(
@@ -146,9 +134,6 @@ class Verdict:
 class PolicyEngine:
     """Deterministic compliance rules over outbound agent text."""
 
-    def _mentions(self, text_l: str, keywords: tuple[str, ...]) -> bool:
-        return any(k in text_l for k in keywords)
-
     def check(
         self,
         text: str,
@@ -165,16 +150,15 @@ class PolicyEngine:
         fixed = text
         violations: list[str] = []
         disclosures: list[str] = []
-        text_l = text.lower()
 
-        # -- blocked claims -> rewrite --
-        for pattern, replacement in _BLOCKED_CLAIMS:
+        # -- blocked claims -> rewrite (English + native scripts) --
+        for pattern, replacement in compliance_terms.BLOCKED_CLAIMS:
             if pattern.search(fixed):
                 violations.append(f"blocked_claim:{pattern.pattern}")
                 fixed = pattern.sub(replacement, fixed)
 
-        mentions_investment = self._mentions(text_l, _INVESTMENT_KEYWORDS)
-        mentions_insurance = self._mentions(text_l, _INSURANCE_KEYWORDS)
+        mentions_investment = compliance_terms.mentions_investment(text)
+        mentions_insurance = compliance_terms.mentions_insurance(text)
 
         # -- suitability gate --
         if suggests_investment is None:

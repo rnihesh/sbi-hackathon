@@ -506,6 +506,7 @@ export default function ChatPage() {
                     message={message}
                     onRetry={message.retryText ? () => handleRetry(message) : undefined}
                     onOfferCta={handleOfferCta}
+                    conversationId={conversationId}
                   />
                 </motion.div>
               ))}

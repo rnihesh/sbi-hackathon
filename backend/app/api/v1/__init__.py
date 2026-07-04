@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, chat, console, customers, demo, notifications, nudges, products
+from app.api.v1 import (
+    auth,
+    chat,
+    console,
+    customers,
+    demo,
+    memory,
+    notifications,
+    nudges,
+    products,
+)
 
 api_router = APIRouter(prefix="/v1")
 api_router.include_router(auth.router)
@@ -15,6 +25,7 @@ api_router.include_router(demo.router)
 api_router.include_router(nudges.router)
 api_router.include_router(notifications.router)
 api_router.include_router(products.router)
+api_router.include_router(memory.router)
 api_router.include_router(console.router)
 
 
