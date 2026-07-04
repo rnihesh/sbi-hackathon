@@ -19,7 +19,15 @@ import pytest_asyncio
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.llm.base import ChatMessage, LLMResponse, ToolCall, ToolSpec
+from app.llm.base import (
+    ChatMessage,
+    LLMResponse,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+    ToolCall,
+    ToolSpec,
+)
 
 TEST_DB_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -85,6 +93,36 @@ class FakeRouter:
         return self.handler(
             purpose=purpose, messages=messages, tools=tools, json_mode=json_mode, system=system
         )
+
+    async def stream_chat(
+        self,
+        *,
+        tier: str = "smart",
+        messages: list[ChatMessage],
+        system: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        purpose: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream the scripted response word-by-word, then a ``StreamDone``."""
+        self.calls.append(
+            {
+                "purpose": purpose,
+                "tier": tier,
+                "json_mode": False,
+                "messages": len(messages),
+                "tools": [],
+                "system": system,
+                "streamed": True,
+            }
+        )
+        resp = self.handler(
+            purpose=purpose, messages=messages, tools=None, json_mode=False, system=system
+        )
+        words = resp.text.split(" ")
+        for i, word in enumerate(words):
+            yield TextDelta(word if i == len(words) - 1 else word + " ")
+        yield StreamDone(resp)
 
 
 class ScriptedHandler:

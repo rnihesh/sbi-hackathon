@@ -19,7 +19,7 @@ from langchain_core.runnables import RunnableConfig
 from app.agents import memory
 from app.agents.context import AgentContext
 from app.agents.state import AgentState, ChatTurn
-from app.agents.toolkit import Tool, run_agent_loop
+from app.agents.toolkit import Tool, run_agent_loop, stream_final_answer
 from app.llm.base import ChatMessage
 from app.models.enums import AgentStepKind, MemoryKind
 
@@ -234,31 +234,24 @@ gently offer to help with it."""
 async def smalltalk_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     ctx = get_ctx(config)
     await ctx.emit({"type": "agent", "agent": "smalltalk", "node": "smalltalk"})
-    started = perf_counter()
     history = [
         ChatMessage(role=t["role"], content=t["content"])  # type: ignore[arg-type]
         for t in state.get("messages") or []
     ]
-    resp = await ctx.router.chat(
+    # The small-talk direct answer is user-facing, so it streams token-by-token on
+    # the chat path (blocking on the event path). ``stream_final_answer`` traces
+    # the call with real usage/cost.
+    draft = await stream_final_answer(
+        ctx,
         tier="fast",
         messages=history or [ChatMessage(role="user", content=state.get("user_text", "hello"))],
         system=_SMALLTALK_SYSTEM,
         purpose="smalltalk",
-    )
-    await ctx.tracer.step(
         node="smalltalk",
-        kind=AgentStepKind.LLM,
         name="smalltalk.answer",
-        input={"text": state.get("user_text", "")[:300]},
-        output={"text": resp.text[:500]},
-        model=resp.model,
-        tokens_in=resp.tokens_in,
-        tokens_out=resp.tokens_out,
-        cost_usd=resp.cost_usd,
-        latency_ms=int((perf_counter() - started) * 1000),
     )
     scratch = dict(state.get("scratch") or {})
-    scratch["last_draft"] = resp.text
+    scratch["last_draft"] = draft
     return {"current_agent": "smalltalk", "scratch": scratch}
 
 
@@ -270,7 +263,8 @@ async def smalltalk_node(state: AgentState, config: RunnableConfig) -> dict[str,
 async def synthesize_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     ctx = get_ctx(config)
     scratch = dict(state.get("scratch") or {})
-    draft = scratch.get("last_draft") or "How can I help you with your banking today?"
+    raw_draft = scratch.get("last_draft") or ""
+    draft = raw_draft or "How can I help you with your banking today?"
 
     suitability = scratch.get("suitability") or {}
     verdict = ctx.policy.check(draft, profile=suitability)
@@ -314,9 +308,20 @@ async def synthesize_node(state: AgentState, config: RunnableConfig) -> dict[str
         except Exception:
             pass
 
-    # Stream the final answer as token deltas, then any structured payloads.
-    for chunk in _chunk(final_text):
-        await ctx.emit({"type": "token", "text": chunk})
+    # The draft has already been streamed to the client token-by-token (real
+    # provider deltas) by the specialist / small-talk node. Guardrails run on the
+    # COMPLETE text here, so we only emit what policy *added* - mandated
+    # disclosures are appended to the tail - to keep the incremental view in sync.
+    # A policy *rewrite* (a blocked claim swapped inline) cannot be un-streamed,
+    # so the authoritative corrected text rides the terminal ``done`` event's
+    # ``final_text``, which the client uses to replace the streamed buffer.
+    if ctx.emitter is not None:
+        if not raw_draft:
+            # Nothing was streamed (empty model output) - emit the fallback so the
+            # incremental view still has content.
+            await ctx.emit({"type": "token", "text": final_text})
+        elif final_text.startswith(draft) and len(final_text) > len(draft):
+            await ctx.emit({"type": "token", "text": final_text[len(draft):]})
     structured = state.get("structured") or {}
     if structured:
         await ctx.emit({"type": "structured", "data": structured})
@@ -324,23 +329,6 @@ async def synthesize_node(state: AgentState, config: RunnableConfig) -> dict[str
     messages: list[ChatTurn] = list(state.get("messages") or [])
     messages.append(ChatTurn(role="assistant", content=final_text))
     return {"final_text": final_text, "messages": messages}
-
-
-def _chunk(text: str, size: int = 24) -> list[str]:
-    """Split text into small chunks for token-delta streaming (real content)."""
-    words = text.split(" ")
-    chunks: list[str] = []
-    buf = ""
-    for w in words:
-        candidate = f"{buf} {w}".strip()
-        if len(candidate) >= size:
-            chunks.append(candidate + " ")
-            buf = ""
-        else:
-            buf = candidate
-    if buf:
-        chunks.append(buf)
-    return chunks
 
 
 def _uuid_or_none(value: str | None) -> uuid.UUID | None:

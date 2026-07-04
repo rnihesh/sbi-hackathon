@@ -12,11 +12,18 @@ Enabled ONLY via ``SARATHI_FAKE_LLM=1`` and only outside `APP_ENV=prod` - see
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from decimal import Decimal
 
 from app.core.config import Settings
-from app.llm.base import ChatMessage, LLMResponse, ToolSpec
+from app.llm.base import (
+    ChatMessage,
+    LLMResponse,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+    ToolSpec,
+)
 from app.llm.router import LLMRouter
 
 _FAKE_TEXT = "Thanks for reaching out - I'm here to help with your banking today."
@@ -49,4 +56,29 @@ class FakeLLMRouter(LLMRouter):
             model="fake-dev",
             provider="fake",
             cost_usd=Decimal("0"),
+        )
+
+    async def stream_chat(
+        self,
+        *,
+        tier: str = "smart",
+        messages: Sequence[ChatMessage],
+        system: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        purpose: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        # Final synthesis is never json_mode, so always the plain compliant reply.
+        words = _FAKE_TEXT.split(" ")
+        for i, word in enumerate(words):
+            yield TextDelta(word if i == len(words) - 1 else word + " ")
+        yield StreamDone(
+            LLMResponse(
+                text=_FAKE_TEXT,
+                tokens_in=8,
+                tokens_out=len(words),
+                model="fake-dev",
+                provider="fake",
+                cost_usd=Decimal("0"),
+            )
         )

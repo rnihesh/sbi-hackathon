@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from functools import lru_cache
 from time import perf_counter
 from typing import Any
@@ -20,7 +20,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings, get_settings
 from app.core.db import get_sessionmaker
 from app.core.logging import get_logger
-from app.llm.base import ChatMessage, LLMError, LLMProvider, LLMResponse, ToolSpec
+from app.llm.base import (
+    ChatMessage,
+    LLMError,
+    LLMProvider,
+    LLMResponse,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+    ToolSpec,
+)
 from app.llm.cost import compute_cost
 from app.llm.providers.anthropic import AnthropicProvider
 from app.llm.providers.gemini import GeminiProvider
@@ -171,6 +180,111 @@ class LLMRouter:
             return resp
 
         raise LLMRouterError(f"all providers failed for tier {tier_str!r}: {'; '.join(errors)}")
+
+    async def stream_chat(
+        self,
+        *,
+        tier: str | LlmTier = "smart",
+        messages: Sequence[ChatMessage],
+        system: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        purpose: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream a chat completion for ``tier`` with the same fallback + ledger
+        guarantees as :meth:`chat`, for the final tool-free user-facing synthesis.
+
+        Yields ``TextDelta``s as the provider produces them, then one
+        ``StreamDone`` carrying the accumulated text + real usage/cost.
+
+        Fallback semantics: if a provider fails *before* yielding any delta, fall
+        through to the next provider in the chain (same as :meth:`chat`). Once a
+        delta has been yielded the stream is committed to that provider - a
+        mid-stream error propagates (switching would duplicate already-sent text).
+        Every completed stream is recorded to the ``llm_calls`` ledger with real
+        usage + cost.
+        """
+        tier_str = str(tier)
+        chain = self._chains.get(tier_str, [])
+        if not chain:
+            raise LLMRouterError(
+                f"no providers with credentials for tier {tier_str!r}; "
+                "set OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY"
+            )
+
+        resolved_max_tokens = max_tokens or self._default_max_tokens
+        errors: list[str] = []
+
+        for name, model in chain:
+            provider = self._providers[name]
+            started = perf_counter()
+            yielded_any = False
+            final_response: LLMResponse | None = None
+            try:
+                async for event in provider.stream_chat(
+                    messages,
+                    model=model,
+                    system=system,
+                    temperature=temperature,
+                    max_tokens=resolved_max_tokens,
+                    timeout=self._timeout,
+                ):
+                    if isinstance(event, TextDelta):
+                        yielded_any = True
+                        yield event
+                    else:  # StreamDone
+                        final_response = event.response
+            except (TimeoutError, Exception) as exc:
+                latency_ms = int((perf_counter() - started) * 1000)
+                errors.append(f"{name}: {exc}")
+                logger.warning(
+                    "llm_stream_provider_failed",
+                    provider=name,
+                    model=model,
+                    error=str(exc),
+                    after_deltas=yielded_any,
+                )
+                self._record(
+                    provider=name,
+                    model=model,
+                    tier=tier_str,
+                    tokens_in=0,
+                    tokens_out=0,
+                    latency_ms=latency_ms,
+                    ok=False,
+                    error=str(exc),
+                    purpose=purpose,
+                )
+                if yielded_any:
+                    # Deltas already sent: cannot switch providers without
+                    # duplicating text - propagate so the caller can finalise.
+                    raise
+                continue
+
+            latency_ms = int((perf_counter() - started) * 1000)
+            if final_response is None:  # provider ended without a StreamDone
+                final_response = LLMResponse(text="", model=model, provider=name)
+            resolved_model = final_response.model or model
+            final_response.cost_usd = compute_cost(
+                resolved_model, final_response.tokens_in, final_response.tokens_out
+            )
+            self._record(
+                provider=name,
+                model=resolved_model,
+                tier=tier_str,
+                tokens_in=final_response.tokens_in,
+                tokens_out=final_response.tokens_out,
+                latency_ms=latency_ms,
+                ok=True,
+                error=None,
+                purpose=purpose,
+            )
+            yield StreamDone(final_response)
+            return
+
+        raise LLMRouterError(
+            f"all providers failed for tier {tier_str!r}: {'; '.join(errors)}"
+        )
 
     # ------------------------------------------------------------------
     # cost ledger (fire-and-forget)

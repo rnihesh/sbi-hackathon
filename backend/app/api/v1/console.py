@@ -131,7 +131,10 @@ async def console_feed(request: Request, staff: StaffUser) -> EventSourceRespons
     """SSE tail of the ``agent.actions`` Stream, resumable via ``Last-Event-ID``."""
     start_id = request.headers.get("last-event-id") or request.query_params.get("since") or "$"
     return EventSourceResponse(
-        feed_events(get_redis(), start_id, request.is_disconnected), ping=15
+        feed_events(get_redis(), start_id, request.is_disconnected),
+        ping=15,
+        # Defeat proxy buffering so events flush immediately (nginx et al.).
+        headers={"X-Accel-Buffering": "no"},
     )
 
 

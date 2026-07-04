@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from openai import AsyncOpenAI
 
-from app.llm.base import ChatMessage, LLMError, LLMResponse, ToolCall, ToolSpec
+from app.llm.base import (
+    ChatMessage,
+    LLMError,
+    LLMResponse,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+    ToolCall,
+    ToolSpec,
+)
 
 
 class OpenAIProvider:
@@ -107,4 +116,60 @@ class OpenAIProvider:
             model=resp.model or model,
             provider=self.provider,
             finish_reason=choice.finish_reason,
+        )
+
+    async def stream_chat(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        model: str,
+        system: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        timeout: float = 60.0,
+    ) -> AsyncIterator[StreamEvent]:
+        client = self._get_client()
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": self._to_openai_messages(messages, system),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "timeout": timeout,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+
+        text_parts: list[str] = []
+        tokens_in = 0
+        tokens_out = 0
+        resolved_model = model
+        finish_reason: str | None = None
+        try:
+            stream = await client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if chunk.model:
+                    resolved_model = chunk.model
+                for choice in chunk.choices:
+                    delta = choice.delta
+                    if delta is not None and delta.content:
+                        text_parts.append(delta.content)
+                        yield TextDelta(delta.content)
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+                # The usage-bearing final chunk (include_usage) has empty choices.
+                if chunk.usage is not None:
+                    tokens_in = chunk.usage.prompt_tokens
+                    tokens_out = chunk.usage.completion_tokens
+        except Exception as exc:
+            raise LLMError(f"openai stream failed: {exc}") from exc
+
+        yield StreamDone(
+            LLMResponse(
+                text="".join(text_parts),
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model=resolved_model or model,
+                provider=self.provider,
+                finish_reason=finish_reason,
+            )
         )

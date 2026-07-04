@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -53,6 +53,24 @@ class LLMResponse:
     cost_usd: Decimal = Decimal("0")
 
 
+@dataclass(slots=True)
+class TextDelta:
+    """A streamed chunk of assistant text (a real provider token delta)."""
+
+    text: str
+
+
+@dataclass(slots=True)
+class StreamDone:
+    """Terminal stream event carrying the fully-accumulated response + usage."""
+
+    response: LLMResponse
+
+
+# A streamed chat yields zero or more ``TextDelta`` then exactly one ``StreamDone``.
+StreamEvent = TextDelta | StreamDone
+
+
 class LLMError(Exception):
     """Base class for LLM provider/router failures."""
 
@@ -84,4 +102,23 @@ class LLMProvider(Protocol):
         timeout: float = 60.0,
     ) -> LLMResponse:
         """Send a chat completion request and return a normalised response."""
+        ...
+
+    def stream_chat(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        model: str,
+        system: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        timeout: float = 60.0,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream a chat completion: yield ``TextDelta``s then one ``StreamDone``.
+
+        Tool-calling is intentionally unsupported here - only the final,
+        tool-free user-facing synthesis is streamed. Providers accumulate the
+        text and capture real usage from the terminal chunk for the
+        ``StreamDone`` response.
+        """
         ...

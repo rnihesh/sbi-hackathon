@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from google import genai
 from google.genai import types
 
-from app.llm.base import ChatMessage, LLMError, LLMResponse, ToolCall, ToolSpec
+from app.llm.base import (
+    ChatMessage,
+    LLMError,
+    LLMResponse,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+    ToolCall,
+    ToolSpec,
+)
 
 # Map common roles to Gemini content roles.
 _ROLE_MAP = {"user": "user", "assistant": "model", "tool": "user"}
@@ -111,4 +120,60 @@ class GeminiProvider:
             model=model,
             provider=self.provider,
             finish_reason=finish_reason,
+        )
+
+    async def stream_chat(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        model: str,
+        system: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        timeout: float = 60.0,
+    ) -> AsyncIterator[StreamEvent]:
+        client = self._get_client()
+        config = types.GenerateContentConfig(
+            system_instruction=system or None,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            http_options=types.HttpOptions(timeout=int(timeout * 1000)),
+        )
+
+        text_parts: list[str] = []
+        tokens_in = 0
+        tokens_out = 0
+        finish_reason: str | None = None
+        try:
+            stream = await client.aio.models.generate_content_stream(
+                model=model,
+                contents=self._to_contents(messages),
+                config=config,
+            )
+            async for chunk in stream:
+                candidates = chunk.candidates or []
+                if candidates and candidates[0].content and candidates[0].content.parts:
+                    for part in candidates[0].content.parts:
+                        if part.text:
+                            text_parts.append(part.text)
+                            yield TextDelta(part.text)
+                if candidates and candidates[0].finish_reason is not None:
+                    finish_reason = str(candidates[0].finish_reason)
+                # Usage accumulates across chunks; the last non-null wins the total.
+                usage = chunk.usage_metadata
+                if usage is not None:
+                    tokens_in = usage.prompt_token_count or tokens_in
+                    tokens_out = usage.candidates_token_count or tokens_out
+        except Exception as exc:
+            raise LLMError(f"gemini stream failed: {exc}") from exc
+
+        yield StreamDone(
+            LLMResponse(
+                text="".join(text_parts),
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model=model,
+                provider=self.provider,
+                finish_reason=finish_reason,
+            )
         )

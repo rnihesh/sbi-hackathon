@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from anthropic import AsyncAnthropic
 
-from app.llm.base import ChatMessage, LLMError, LLMResponse, ToolCall, ToolSpec
+from app.llm.base import (
+    ChatMessage,
+    LLMError,
+    LLMResponse,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+    ToolCall,
+    ToolSpec,
+)
 
 _JSON_SUFFIX = "\n\nRespond ONLY with a single valid JSON object and no other text."
 
@@ -104,4 +113,46 @@ class AnthropicProvider:
             model=resp.model or model,
             provider=self.provider,
             finish_reason=resp.stop_reason,
+        )
+
+    async def stream_chat(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        model: str,
+        system: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        timeout: float = 60.0,
+    ) -> AsyncIterator[StreamEvent]:
+        client = self._get_client()
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": self._to_messages(messages),
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "timeout": timeout,
+        }
+        if system:
+            kwargs["system"] = system
+
+        text_parts: list[str] = []
+        try:
+            async with client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    text_parts.append(text)
+                    yield TextDelta(text)
+                final = await stream.get_final_message()
+        except Exception as exc:
+            raise LLMError(f"anthropic stream failed: {exc}") from exc
+
+        yield StreamDone(
+            LLMResponse(
+                text="".join(text_parts),
+                tokens_in=final.usage.input_tokens,
+                tokens_out=final.usage.output_tokens,
+                model=final.model or model,
+                provider=self.provider,
+                finish_reason=final.stop_reason,
+            )
         )
