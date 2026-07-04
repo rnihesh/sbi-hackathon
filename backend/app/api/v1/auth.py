@@ -69,6 +69,8 @@ from app.schemas.auth import (
     MessageResponse,
     OtpSendRequest,
     OtpVerifyRequest,
+    PasskeyCredentialListResponse,
+    PasskeyCredentialOut,
     PasskeyLoginBeginRequest,
     PasskeyLoginCompleteRequest,
     PasskeyRegisterCompleteRequest,
@@ -498,6 +500,53 @@ async def passkey_register_complete(
         label=label,
         transport=transport.value,
     )
+
+
+@router.get(
+    "/passkey/credentials",
+    response_model=PasskeyCredentialListResponse,
+    summary="List the current user's passkeys",
+)
+async def passkey_credentials_list(
+    user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PasskeyCredentialListResponse:
+    result = await db.execute(
+        select(Credential).where(Credential.user_id == user.id).order_by(Credential.created_at)
+    )
+    return PasskeyCredentialListResponse(
+        credentials=[
+            PasskeyCredentialOut(
+                id=str(c.id),
+                label=c.label,
+                transport=c.transport.value,
+                created_at=c.created_at,
+            )
+            for c in result.scalars()
+        ]
+    )
+
+
+@router.delete(
+    "/passkey/credentials/{credential_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove one of the current user's passkeys",
+)
+async def passkey_credentials_delete(
+    credential_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    result = await db.execute(
+        select(Credential).where(
+            Credential.id == credential_id, Credential.user_id == user.id
+        )
+    )
+    credential = result.scalar_one_or_none()
+    if credential is None:
+        raise HTTPException(status_code=404, detail="Passkey not found")
+    await db.delete(credential)
+    await db.flush()
 
 
 @router.post("/passkey/login/begin", summary="Begin passkey login")

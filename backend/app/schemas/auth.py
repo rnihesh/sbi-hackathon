@@ -78,6 +78,17 @@ class PasskeyRegisterCompleteResponse(BaseModel):
     transport: str
 
 
+class PasskeyCredentialOut(BaseModel):
+    id: str
+    label: str
+    transport: str
+    created_at: datetime
+
+
+class PasskeyCredentialListResponse(BaseModel):
+    credentials: list[PasskeyCredentialOut]
+
+
 class PasskeyLoginBeginRequest(BaseModel):
     email: EmailStr | None = None
 
