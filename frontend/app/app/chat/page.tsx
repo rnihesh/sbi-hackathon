@@ -2,25 +2,42 @@
 
 import * as React from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { PlusCircle } from "lucide-react"
+import { History, MessageSquare, PlusCircle } from "lucide-react"
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError, sseStream } from "@/lib/api"
 import { useMe } from "@/lib/auth"
+import { formatRelativeTime, pluralize } from "@/lib/format"
 import { springSnappy } from "@/lib/motion"
 import { normalizeStructuredPayload } from "@/lib/chat-types"
 import type { ChatMessage, ProductOffer, ToolActivity } from "@/lib/chat-types"
 import { Button } from "@/components/ui/button"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { MessageBubble } from "@/components/chat/message-bubble"
 import { ChatComposer } from "@/components/chat/chat-composer"
+import { SarathiMark } from "@/components/brand/logo"
+
+interface ChatSessionSummary {
+  conversation_id: string
+  title: string
+  message_count: number
+  updated_at: string
+}
 
 const CONVERSATION_KEY = "sarathi:conversation_id"
 
 const SUGGESTIONS = [
+  "Open a savings account",
+  "What can I invest in?",
+  "Show me how to set up UPI",
   "What's my account balance?",
-  "Any new offers for me?",
-  "Help me open a fixed deposit",
 ]
 
 function newId(): string {
@@ -50,6 +67,8 @@ export default function ChatPage() {
   const [input, setInput] = React.useState("")
   const [isStreaming, setIsStreaming] = React.useState(false)
   const [restoring, setRestoring] = React.useState(true)
+  const [historyOpen, setHistoryOpen] = React.useState(false)
+  const [sessions, setSessions] = React.useState<ChatSessionSummary[] | null>(null)
 
   const abortControllerRef = React.useRef<AbortController | null>(null)
   const scrollRef = React.useRef<HTMLDivElement>(null)
@@ -273,6 +292,45 @@ export default function ChatPage() {
     setInput("")
   }
 
+  async function openHistory(open: boolean) {
+    setHistoryOpen(open)
+    if (!open) return
+    try {
+      const res = await api.get<{ sessions: ChatSessionSummary[] }>(`${API_V1}/chat/sessions`)
+      setSessions(res.sessions)
+    } catch {
+      setSessions([])
+    }
+  }
+
+  async function handleOpenConversation(session: ChatSessionSummary) {
+    if (isStreaming) abortControllerRef.current?.abort()
+    setHistoryOpen(false)
+    if (session.conversation_id === conversationId) return
+    setRestoring(true)
+    setConversationId(session.conversation_id)
+    sessionStorage.setItem(CONVERSATION_KEY, session.conversation_id)
+    try {
+      const res = await api.get<{
+        messages: { role: string; content: string; created_at: string }[]
+      }>(`${API_V1}/chat/sessions/${session.conversation_id}`)
+      setMessages(
+        res.messages
+          .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
+          .map((m) => ({
+            id: newId(),
+            role: m.role as ChatMessage["role"],
+            content: m.content,
+            createdAt: m.created_at,
+          }))
+      )
+    } catch {
+      toast.error("Couldn't load that conversation")
+    } finally {
+      setRestoring(false)
+    }
+  }
+
   function handleOfferCta(offer: ProductOffer) {
     handleSend(`Tell me more about ${offer.name}`)
   }
@@ -284,12 +342,64 @@ export default function ChatPage() {
           <h1 className="text-lg font-semibold tracking-tight">Chat</h1>
           <p className="text-sm text-muted-foreground">Ask Sarathi anything about your money.</p>
         </div>
-        {(messages.length > 0 || conversationId) && (
-          <Button variant="ghost" size="sm" className="gap-1.5" onClick={handleNewConversation}>
-            <PlusCircle className="size-3.5" />
-            New
-          </Button>
-        )}
+        <div className="flex items-center gap-1">
+          {me?.customer && (
+            <Sheet open={historyOpen} onOpenChange={(open) => void openHistory(open)}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-1.5">
+                  <History className="size-3.5" />
+                  History
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-80 sm:w-96">
+                <SheetHeader>
+                  <SheetTitle>Conversations</SheetTitle>
+                </SheetHeader>
+                <div className="flex flex-col gap-1 overflow-y-auto px-2 pb-4">
+                  {sessions === null ? (
+                    <div className="flex flex-col gap-2 px-2 pt-2">
+                      <Skeleton className="h-12 w-full rounded-lg" />
+                      <Skeleton className="h-12 w-full rounded-lg" />
+                      <Skeleton className="h-12 w-full rounded-lg" />
+                    </div>
+                  ) : sessions.length === 0 ? (
+                    <p className="px-2 pt-2 text-sm text-muted-foreground">
+                      No conversations yet. Start one and it will show up here.
+                    </p>
+                  ) : (
+                    sessions.map((session) => (
+                      <button
+                        key={session.conversation_id}
+                        onClick={() => void handleOpenConversation(session)}
+                        className={
+                          "flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted " +
+                          (session.conversation_id === conversationId ? "bg-muted" : "")
+                        }
+                      >
+                        <MessageSquare className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">
+                            {session.title}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {formatRelativeTime(session.updated_at)} ·{" "}
+                            {pluralize(session.message_count, "message")}
+                          </span>
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </SheetContent>
+            </Sheet>
+          )}
+          {(messages.length > 0 || conversationId) && (
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={handleNewConversation}>
+              <PlusCircle className="size-3.5" />
+              New
+            </Button>
+          )}
+        </div>
       </div>
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto py-2">
@@ -301,9 +411,9 @@ export default function ChatPage() {
           </div>
         ) : messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 px-4 text-center">
-            <p className="text-sm text-muted-foreground">
-              Ask about your balance, a new deposit, or anything on your mind - Sarathi will
-              walk you through it.
+            <SarathiMark className="size-8 text-primary" />
+            <p className="max-w-xs text-sm text-muted-foreground">
+              I&apos;m Sarathi, your banker. Open an account, explore products, or ask anything.
             </p>
             <div className="flex flex-wrap justify-center gap-2">
               {SUGGESTIONS.map((suggestion) => (

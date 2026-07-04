@@ -3,7 +3,8 @@
 import * as React from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { ArrowDownLeft, ArrowUpRight, Bell, ChevronRight } from "lucide-react"
+import { ArrowDownLeft, ArrowUpRight, Bell, ChevronRight, Sparkles } from "lucide-react"
+import { toast } from "sonner"
 
 import { api, API_V1, ApiError } from "@/lib/api"
 import { useMe } from "@/lib/auth"
@@ -12,34 +13,51 @@ import { formatPaise, formatRelativeTime, humanizeIdentifier, timeOfDayGreeting 
 import { categoryIcon } from "@/lib/category-icons"
 import type { DashboardResponse } from "@/lib/customer-types"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { SarathiMark } from "@/components/brand/logo"
 
 export default function HomePage() {
   const { me } = useMe()
   const [dashboard, setDashboard] = React.useState<DashboardResponse | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const [loadingDemo, setLoadingDemo] = React.useState(false)
 
-  React.useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    api
-      .get<DashboardResponse>(`${API_V1}/me/dashboard`)
-      .then((res) => {
-        if (!cancelled) setDashboard(res)
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setError(err instanceof ApiError ? err.message : "Couldn't load your dashboard.")
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
+  const fetchDashboard = React.useCallback(async () => {
+    try {
+      const res = await api.get<DashboardResponse>(`${API_V1}/me/dashboard`)
+      setDashboard(res)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't load your dashboard.")
+    } finally {
+      setLoading(false)
     }
   }, [])
+
+  React.useEffect(() => {
+    setLoading(true)
+    void fetchDashboard()
+  }, [fetchDashboard])
+
+  async function handleLoadDemoActivity() {
+    setLoadingDemo(true)
+    try {
+      const res = await api.post<{ transactions: number; months: number }>(
+        `${API_V1}/me/demo-activity`
+      )
+      toast.success("Demo activity loaded", {
+        description: `${res.transactions} transactions over ${res.months} months. Sarathi's agents are now watching your account.`,
+      })
+      await fetchDashboard()
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't load demo activity")
+    } finally {
+      setLoadingDemo(false)
+    }
+  }
 
   const firstName = (dashboard?.customer.full_name ?? me?.customer?.full_name ?? "").split(" ")[0]
   const greeting = firstName ? `${timeOfDayGreeting()}, ${firstName}` : timeOfDayGreeting()
@@ -53,7 +71,7 @@ export default function HomePage() {
 
       {error && (
         <Card>
-          <CardContent className="py-4 text-sm text-muted-foreground">{error}</CardContent>
+          <CardContent className="text-sm text-muted-foreground">{error}</CardContent>
         </Card>
       )}
 
@@ -76,9 +94,40 @@ export default function HomePage() {
             </motion.div>
           )}
 
-          {dashboard.accounts.length > 0 && (
+          {dashboard.accounts.length > 0 ? (
             <motion.div variants={staggerItem}>
               <AccountsCard accounts={dashboard.accounts} />
+            </motion.div>
+          ) : (
+            <motion.div variants={staggerItem}>
+              <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-4 py-16 text-center">
+                <SarathiMark className="size-8 text-primary" />
+                <div>
+                  <p className="text-sm font-medium">No accounts yet</p>
+                  <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
+                    Open your first account in a 5-minute conversation.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button asChild size="sm">
+                    <Link href="/app/chat">Chat with Sarathi</Link>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={loadingDemo}
+                    onClick={() => void handleLoadDemoActivity()}
+                  >
+                    <Sparkles className="size-3.5" />
+                    {loadingDemo ? "Loading…" : "Load demo activity"}
+                  </Button>
+                </div>
+                <p className="max-w-xs text-xs text-muted-foreground">
+                  Demo activity fills your account with 6 months of realistic synthetic
+                  transactions so you can see every feature working.
+                </p>
+              </div>
             </motion.div>
           )}
 
@@ -181,7 +230,7 @@ function AccountsCard({ accounts }: { accounts: DashboardResponse["accounts"] })
 function EmptyPanel({ label }: { label: string }) {
   return (
     <Card>
-      <CardContent className="py-4 text-sm text-muted-foreground">{label}</CardContent>
+      <CardContent className="text-sm text-muted-foreground">{label}</CardContent>
     </Card>
   )
 }
