@@ -32,4 +32,5 @@ dist/
 # data
 pgdata/
 redisdata/
+backend/app/sim/out/
 *.log
