@@ -11,7 +11,7 @@ export function formatPaise(paise: number): string {
   return inr.format(paise / 100)
 }
 
-/** Signed paise amount for transaction rows — `+`/`-` prefix, no currency symbol
+/** Signed paise amount for transaction rows - `+`/`-` prefix, no currency symbol
  * repetition needed since the sign already communicates direction. */
 export function formatSignedPaise(paise: number, direction: "credit" | "debit"): string {
   const amount = inr.format(Math.abs(paise) / 100)
@@ -30,7 +30,7 @@ const DIVISIONS: Array<{ amount: number; unit: Intl.RelativeTimeFormatUnit }> = 
   { amount: Number.POSITIVE_INFINITY, unit: "years" },
 ]
 
-/** Renders `iso` relative to now — "3 minutes ago", "yesterday", etc. */
+/** Renders `iso` relative to now - "3 minutes ago", "yesterday", etc. */
 export function formatRelativeTime(iso: string, now: Date = new Date()): string {
   let duration = (new Date(iso).getTime() - now.getTime()) / 1000
 

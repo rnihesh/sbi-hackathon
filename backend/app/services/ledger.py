@@ -1,4 +1,4 @@
-"""Ledger service — a real, minimal core-banking ledger over the DB.
+"""Ledger service - a real, minimal core-banking ledger over the DB.
 
 All amounts are in **paise** (integer) to avoid float money. Balance mutations
 go through :func:`post_transaction`, which takes a row-level lock on the account
@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.banking import Account, Transaction
@@ -125,6 +126,25 @@ async def get_recent_transactions(
     return list((await session.scalars(stmt)).all())
 
 
+async def get_latest_transactions(
+    session: AsyncSession, customer_id: uuid.UUID, *, limit: int = 20
+) -> list[Transaction]:
+    """Return a customer's most recent ``limit`` transactions, newest first.
+
+    Unlike :func:`get_recent_transactions`, this has no day-window cutoff - it is
+    "latest N", which is what a dashboard's recent-activity list wants (sim seed
+    data is anchored to a fixed historical start date, not "now").
+    """
+    stmt = (
+        sa.select(Transaction)
+        .join(Account, Transaction.account_id == Account.id)
+        .where(Account.customer_id == customer_id)
+        .order_by(Transaction.ts.desc())
+        .limit(limit)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
 async def post_transaction(
     session: AsyncSession,
     *,
@@ -184,4 +204,86 @@ async def post_transaction(
     )
     session.add(txn)
     await session.flush()
+    return txn
+
+
+async def post_transaction_idempotent(
+    session: AsyncSession,
+    *,
+    account_id: uuid.UUID,
+    event_id: str,
+    amount_paise: int,
+    direction: TxnDirection | str,
+    channel: TxnChannel | str,
+    merchant: str | None = None,
+    mcc: str | None = None,
+    category: str | None = None,
+    description: str | None = None,
+    ts: datetime | None = None,
+    allow_overdraft: bool = True,
+) -> Transaction | None:
+    """Idempotent variant of :func:`post_transaction`, keyed on ``event_id``.
+
+    Used by the live event-consumer path (``app.workers.event_consumer``), where the
+    same Redis Stream entry may be delivered more than once (consumer restarts,
+    at-least-once delivery, retries). Returns ``None`` - and leaves the balance
+    untouched - if ``event_id`` was already applied; the caller should treat that as
+    "already processed" rather than an error.
+
+    ``allow_overdraft`` defaults to ``True`` here (unlike :func:`post_transaction`):
+    the sim engine's own overdraft guard already prevented ungenerated debits, so a
+    live debit event reaching this far is trusted data, not something to reject.
+    """
+    if amount_paise <= 0:
+        raise LedgerError("transaction amount must be positive")
+
+    direction = _coerce_direction(direction)
+    channel = _coerce_channel(channel)
+
+    # Lock the account first so a concurrent duplicate delivery serialises behind
+    # this one and reliably observes the row inserted below.
+    locked = await session.execute(
+        sa.select(Account).where(Account.id == account_id).with_for_update()
+    )
+    account = locked.scalar_one_or_none()
+    if account is None:
+        raise LedgerError(f"account {account_id} not found")
+
+    existing = await session.scalar(
+        sa.select(Transaction.id).where(Transaction.event_id == event_id)
+    )
+    if existing is not None:
+        return None
+
+    if direction is TxnDirection.DEBIT:
+        new_balance = account.balance_paise - amount_paise
+        if new_balance < 0 and not allow_overdraft:
+            raise LedgerError(
+                f"insufficient funds: balance {account.balance_paise} < debit {amount_paise}"
+            )
+    else:
+        new_balance = account.balance_paise + amount_paise
+    account.balance_paise = new_balance
+
+    txn = Transaction(
+        account_id=account.id,
+        event_id=event_id,
+        ts=ts or datetime.now(UTC),
+        amount_paise=amount_paise,
+        direction=direction,
+        channel=channel,
+        merchant=merchant,
+        mcc=mcc,
+        category=category,
+        balance_after_paise=new_balance,
+        description=description,
+    )
+    session.add(txn)
+    try:
+        await session.flush()
+    except IntegrityError:
+        # Lost a race against a concurrent delivery of the same event_id (or a
+        # crash-and-retry re-sent it after our own prior attempt actually committed).
+        await session.rollback()
+        return None
     return txn

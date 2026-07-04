@@ -2,13 +2,13 @@
 
 Three independent, deterministic layers that wrap every agent turn:
 
-1. :class:`PIIRedactor` — strips PAN / Aadhaar / phone / email / account numbers
+1. :class:`PIIRedactor` - strips PAN / Aadhaar / phone / email / account numbers
    to typed placeholders (``<PAN_1>``) *before* any text reaches an LLM, keeping
    a reversible map so tool arguments can be restored to real values.
-2. :class:`PolicyEngine` — appends mandated disclosures, blocks disallowed claims
+2. :class:`PolicyEngine` - appends mandated disclosures, blocks disallowed claims
    ("guaranteed returns", "zero risk"), and gates investment suggestions behind a
    suitability check (income + risk on file).
-3. :class:`AuditTrail` — writes tamper-evident, hash-chained ``audit_logs`` rows;
+3. :class:`AuditTrail` - writes tamper-evident, hash-chained ``audit_logs`` rows;
    appends are serialised with a Postgres advisory lock so the chain stays linear
    under concurrency, with a retry fallback on conflict.
 """
@@ -240,7 +240,7 @@ class AuditTrail:
         if not tails:
             return GENESIS_HASH
         # If (transiently) more than one tail exists, chain from the most recent
-        # by timestamp — the advisory lock makes this the common, single-tail case.
+        # by timestamp - the advisory lock makes this the common, single-tail case.
         if len(tails) == 1:
             return tails[0]
         latest = await session.scalar(

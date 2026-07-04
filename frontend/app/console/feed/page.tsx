@@ -35,7 +35,7 @@ export default function LiveFeedPage() {
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border py-16 text-center">
           <Radio className="size-5 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
-            {status === "open" ? "Listening — nothing has happened yet." : "Connecting to the live feed…"}
+            {status === "open" ? "Listening - nothing has happened yet." : "Connecting to the live feed…"}
           </p>
         </div>
       ) : (

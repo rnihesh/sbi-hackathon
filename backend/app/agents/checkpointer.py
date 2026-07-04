@@ -2,8 +2,8 @@
 
 Wraps an ``AsyncPostgresSaver`` over a long-lived autocommit connection pool so
 runs survive process restarts and multi-turn onboarding resumes by ``thread_id``
-(the conversation id). ``init_checkpointer`` is idempotent — safe to call at
-startup and lazily on first use — and runs ``setup()`` once to create the
+(the conversation id). ``init_checkpointer`` is idempotent - safe to call at
+startup and lazily on first use - and runs ``setup()`` once to create the
 checkpoint tables.
 """
 

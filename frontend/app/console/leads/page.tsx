@@ -62,7 +62,7 @@ export default function LeadsPage() {
         </div>
       ) : (
         <>
-          {/* Cards — mobile */}
+          {/* Cards - mobile */}
           <div className="flex flex-col gap-3 md:hidden">
             {leads.map((lead) => (
               <Card key={lead.id}>
@@ -85,7 +85,7 @@ export default function LeadsPage() {
             ))}
           </div>
 
-          {/* Table — desktop */}
+          {/* Table - desktop */}
           <div className="hidden overflow-x-auto rounded-xl border border-border md:block">
             <table className="w-full min-w-[560px] text-sm">
               <thead>

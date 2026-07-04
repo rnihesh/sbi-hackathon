@@ -1,11 +1,11 @@
 """Public entry points for the agent mesh (consumed by Wave 3).
 
-- :func:`run_chat_turn` — streaming chat turn; yields typed SSE events
+- :func:`run_chat_turn` - streaming chat turn; yields typed SSE events
   (``run_started`` → ``agent``/``tool_start``/``tool_end``/``token``/``structured``
   → ``done``), and creates the full ``agent_run``/``agent_step`` trace.
-- :func:`run_event_trigger` — one non-streaming agent run for the Redis event
+- :func:`run_event_trigger` - one non-streaming agent run for the Redis event
   consumer; returns an :class:`AgentRunResult`.
-- :func:`execute_proposal` — human-in-the-loop executor: switches on the
+- :func:`execute_proposal` - human-in-the-loop executor: switches on the
   proposal's action kind (``send_nudge`` now; ``send_email`` delegated to the
   Wave 2B email service, imported lazily/duck-typed).
 """
@@ -157,7 +157,7 @@ async def _persist_message(
 ) -> None:
     conv_id = _uuid_or_none(conversation_id)
     if conv_id is None:
-        return  # non-UUID thread id (e.g. prospect) — history lives in the checkpointer
+        return  # non-UUID thread id (e.g. prospect) - history lives in the checkpointer
     sm = get_sessionmaker()
     try:
         async with sm() as session:

@@ -1,9 +1,9 @@
-"""Acquisition agent — SBI-style onboarding relationship manager.
+"""Acquisition agent - SBI-style onboarding relationship manager.
 
 Runs genuine multi-turn onboarding: creates a lead, scores intent, collects and
 validates KYC fields progressively, verifies KYC, matches products, and opens an
 account. The **open-account KYC gate is enforced in code** (:func:`_open_account`),
-not merely in the prompt — the account cannot be opened until KYC status is
+not merely in the prompt - the account cannot be opened until KYC status is
 ``verified``, whatever the LLM tries.
 """
 
@@ -51,7 +51,7 @@ Your job, in order:
 ask for more than one at once. PAN format is ABCDE1234F.
 3. Once name + PAN are collected, call verify_kyc.
 4. Only AFTER KYC status is 'verified', call open_account (savings by default). If not \
-verified, do NOT promise an account — explain what is pending.
+verified, do NOT promise an account - explain what is pending.
 5. Optionally call match_products to suggest suitable next products, and score_intent to \
 record buying intent.
 
@@ -199,12 +199,12 @@ async def _match_products(ctx: AgentContext, state: AgentState, args: ToolArgs) 
 
 
 async def _open_account(ctx: AgentContext, state: AgentState, args: ToolArgs) -> ToolResult:
-    """Open an account — ENFORCED KYC gate lives here, not in the prompt."""
+    """Open an account - ENFORCED KYC gate lives here, not in the prompt."""
     bag = _kyc_bag(state)
     if bag.get("status") != "verified":
         return {
             "opened": False,
-            "error": "KYC not verified — account cannot be opened",
+            "error": "KYC not verified - account cannot be opened",
             "kyc_status": bag.get("status", "not_started"),
         }
 
@@ -268,7 +268,7 @@ async def _ensure_customer(ctx: AgentContext, state: AgentState) -> Customer:
 
 async def _record_memory(ctx: AgentContext, state: AgentState, args: ToolArgs) -> ToolResult:
     if ctx.customer_id is None:
-        # No customer yet — stash on the lead notes instead.
+        # No customer yet - stash on the lead notes instead.
         lead_id = (state.get("scratch") or {}).get("lead_id")
         if lead_id:
             lead = await ctx.session.get(Lead, uuid.UUID(lead_id))

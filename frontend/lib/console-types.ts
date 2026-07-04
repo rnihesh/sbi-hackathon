@@ -29,7 +29,7 @@ export interface Proposal {
 
 /**
  * `GET /console/leads` isn't pinned to an exact response schema in the Wave 3
- * contract — this reads the `Lead` ORM model's field names (`name`, `email`,
+ * contract - this reads the `Lead` ORM model's field names (`name`, `email`,
  * `phone`, `intent_score`, `stage`) but tolerates a couple of common alternate
  * key spellings defensively via `normalizeLead`.
  */

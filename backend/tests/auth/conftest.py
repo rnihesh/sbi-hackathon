@@ -2,7 +2,7 @@
 
 Runs against the real, native Postgres configured via app settings, wrapped in a
 per-test connection + outer transaction (with nested savepoints so the app's own
-``session.commit()`` calls never escape it) that is always rolled back — nothing here
+``session.commit()`` calls never escape it) that is always rolled back - nothing here
 ever persists to the shared dev database. Redis uses a dedicated logical DB (index 15)
 that is flushed before and after every test.
 """

@@ -13,9 +13,14 @@ TXN_EVENTS = "txn.events"
 AGENT_ACTIONS = "agent.actions"
 """Stream of agent-emitted actions (proposals, nudges) for live console feeds."""
 
+TXN_EVENTS_DLQ = "txn.events.dlq"
+"""Dead-letter stream for `txn.events` entries that failed processing 3+ times."""
+
 # Consumer-group names used by workers.
 GROUP_ENGAGEMENT = "engagement"
 GROUP_CONSOLE = "console"
+GROUP_AGENTS = "sarathi-agents"
+"""Consumer group the event worker (`app.workers.event_consumer`) reads `txn.events` with."""
 
 
 _client: Redis | None = None

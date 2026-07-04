@@ -6,7 +6,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Aperture theme — stone neutrals + single clay-orange (#D97757) accent.
+ * Aperture theme - stone neutrals + single clay-orange (#D97757) accent.
  * Monochrome everywhere else. Accent used sparingly: primary actions,
  * active nav state, key metrics.
  */
@@ -172,7 +172,7 @@
   }
 }
 
-/* Chat markdown — Aperture-matched typography (clay links, mono code/numbers). */
+/* Chat markdown - Aperture-matched typography (clay links, mono code/numbers). */
 .prose-sarathi {
   --tw-prose-body: var(--foreground);
   --tw-prose-headings: var(--foreground);

@@ -1,4 +1,4 @@
-"""Deterministic domain services — the prototype's "core banking".
+"""Deterministic domain services - the prototype's "core banking".
 
 These are plain, real logic against the real database (no LLM, no randomness at
 runtime). Agents call them as tools; the API layer calls them directly. Keeping

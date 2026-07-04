@@ -6,7 +6,7 @@ export default function TracesPage() {
     <div className="mx-auto max-w-4xl">
       <ConsolePageHeader
         title="Traces"
-        description="Every agent run — node, tool, model, tokens, latency, cost."
+        description="Every agent run - node, tool, model, tokens, latency, cost."
       />
       <ListRowSkeleton count={5} />
     </div>

@@ -41,7 +41,7 @@ export default function ConsoleLayout({
             children
           ) : status === "authenticated" && access === "forbidden" ? (
             <StaffRequiredPanel />
-          ) : null /* anonymous — redirect effect above is firing */}
+          ) : null /* anonymous - redirect effect above is firing */}
         </main>
       </div>
     </div>

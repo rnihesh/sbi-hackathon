@@ -3,7 +3,7 @@
 /**
  * Auth state for the whole app: a single `GET /me` fetch on mount, exposed via
  * `useMe()`. Login flows (OTP verify, passkey login) already get a `MeResponse`
- * back from their own endpoint — they call `setMe()` directly instead of waiting
+ * back from their own endpoint - they call `setMe()` directly instead of waiting
  * on a refetch. A 401 that survives the `lib/api.ts` refresh-retry dispatches
  * `SESSION_EXPIRED_EVENT`, which this provider listens for to hard-reset to
  * anonymous (e.g. logout in another tab, or a revoked refresh token).
@@ -40,7 +40,7 @@ export type AuthStatus = "loading" | "authenticated" | "anonymous"
 interface AuthContextValue {
   me: MeResponse | null
   status: AuthStatus
-  /** Hydrate auth state directly from a login endpoint's response — avoids an
+  /** Hydrate auth state directly from a login endpoint's response - avoids an
    * extra round trip to `/me` right after signing in. */
   setMe: (me: MeResponse) => void
   /** Re-fetch `/me` (e.g. after chat onboarding creates a customer for an
@@ -56,7 +56,7 @@ async function fetchMe(): Promise<MeResponse | null> {
     return await api.get<MeResponse>(`${API_V1}/me`)
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return null
-    // Backend not reachable yet (e.g. not started) — degrade to anonymous rather
+    // Backend not reachable yet (e.g. not started) - degrade to anonymous rather
     // than hanging the app in a loading state forever.
     console.warn("me_fetch_failed", err)
     return null

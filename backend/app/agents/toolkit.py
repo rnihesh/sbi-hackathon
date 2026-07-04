@@ -126,7 +126,7 @@ async def run_agent_loop(
             messages.append(ChatMessage(role="assistant", content=resp.text))
 
         for call in resp.tool_calls:
-            redacted_args = call.args  # placeholders only — what the LLM actually saw
+            redacted_args = call.args  # placeholders only - what the LLM actually saw
             await ctx.emit(
                 {
                     "type": "tool_start",
@@ -166,7 +166,7 @@ async def run_agent_loop(
             )
 
     if not draft:
-        # Loop exhausted its tool budget — force a final, tool-free synthesis.
+        # Loop exhausted its tool budget - force a final, tool-free synthesis.
         started = perf_counter()
         resp = await ctx.router.chat(
             tier=tier,

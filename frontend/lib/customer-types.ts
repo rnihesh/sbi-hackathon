@@ -51,7 +51,7 @@ export interface Nudge {
   id: string
   title: string
   body: string
-  /** Free-form JSONB on the backend — read defensively via `ctaLabel`/`ctaUrl`
+  /** Free-form JSONB on the backend - read defensively via `ctaLabel`/`ctaUrl`
    * below rather than assuming an exact shape. */
   cta: Record<string, unknown> | null
   status: "sent" | "seen" | "acted" | "dismissed"

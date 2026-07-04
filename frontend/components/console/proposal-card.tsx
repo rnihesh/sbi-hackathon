@@ -98,7 +98,7 @@ export function ProposalCard({
           <DialogHeader>
             <DialogTitle>Reject proposal</DialogTitle>
             <DialogDescription>
-              Optionally note why — this helps the agent mesh calibrate future proposals.
+              Optionally note why - this helps the agent mesh calibrate future proposals.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">

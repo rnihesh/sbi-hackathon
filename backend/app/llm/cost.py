@@ -1,7 +1,7 @@
 """LLM pricing table and cost computation (USD).
 
 Prices are approximate USD per 1,000,000 tokens (input, output). Keep this dict
-updatable — bump entries as provider pricing changes.
+updatable - bump entries as provider pricing changes.
 """
 
 from __future__ import annotations

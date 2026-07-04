@@ -11,7 +11,7 @@ import "./globals.css"
 
 export const metadata: Metadata = {
   title: "Sarathi",
-  description: "A banker in every pocket — an agentic relationship manager for SBI.",
+  description: "A banker in every pocket - an agentic relationship manager for SBI.",
 }
 
 export const viewport: Viewport = {

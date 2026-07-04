@@ -9,6 +9,7 @@ back to the next provider on error/timeout, records every attempt to the
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Sequence
 from functools import lru_cache
 from time import perf_counter
@@ -204,7 +205,7 @@ class LLMRouter:
                 )
             )
         except RuntimeError:
-            # No running event loop (e.g. sync context) — skip persistence.
+            # No running event loop (e.g. sync context) - skip persistence.
             return
         self._bg_tasks.add(task)
         task.add_done_callback(self._bg_tasks.discard)
@@ -238,5 +239,15 @@ class LLMRouter:
 
 @lru_cache(maxsize=1)
 def get_router() -> LLMRouter:
-    """Return the process-wide cached router wired to settings + DB sessionmaker."""
-    return LLMRouter(settings=get_settings(), sessionmaker=get_sessionmaker())
+    """Return the process-wide cached router wired to settings + DB sessionmaker.
+
+    Dev/test-only escape hatch: ``SARATHI_FAKE_LLM=1`` (never in prod) swaps in a
+    network-free :class:`~app.llm.fake.FakeLLMRouter` so the agent pipeline can be
+    exercised end-to-end before real provider keys exist.
+    """
+    settings = get_settings()
+    if os.environ.get("SARATHI_FAKE_LLM") == "1" and settings.app_env.lower() != "prod":
+        from app.llm.fake import FakeLLMRouter
+
+        return FakeLLMRouter(settings)
+    return LLMRouter(settings=settings, sessionmaker=get_sessionmaker())

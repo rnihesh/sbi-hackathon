@@ -1,12 +1,12 @@
 """Simulated KYC verifier with realistic behaviour.
 
-Real, deterministic logic — never random at runtime:
+Real, deterministic logic - never random at runtime:
 - PAN format validation (``ABCDE1234F``).
 - Aadhaar: 12 digits + **Verhoeff** checksum (the real Aadhaar check-digit
   scheme), so made-up numbers fail like they would against UIDAI.
 - Fuzzy name matching (claimed vs official).
 - A deterministic ~5% "manual review / mismatch" injection keyed on a hash of
-  the inputs, plus a small simulated verification latency — reproducible, so
+  the inputs, plus a small simulated verification latency - reproducible, so
   the same applicant always gets the same outcome (no runtime ``random``).
 """
 

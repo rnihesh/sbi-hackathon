@@ -2,7 +2,7 @@
 
 ``AgentContext`` bundles everything a node/tool needs but that must NOT be
 checkpointed (DB session, router, tracer, redaction map, event emitter). It is
-handed to nodes through ``config["configurable"]["ctx"]`` — LangGraph checkpoints
+handed to nodes through ``config["configurable"]["ctx"]`` - LangGraph checkpoints
 state channels, never the config, so this stays out of the persisted snapshot.
 """
 

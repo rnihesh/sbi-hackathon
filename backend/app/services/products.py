@@ -280,7 +280,7 @@ def _score_and_reasons(
     if code == "fixed_deposit" and idle is not None and idle > 50_000 * _RUPEE:
         score += 0.45
         reasons.append(
-            f"~₹{idle // _RUPEE:,} sitting idle in savings — could earn FD interest"
+            f"~₹{idle // _RUPEE:,} sitting idle in savings - could earn FD interest"
         )
     if code == "recurring_deposit" and (profile.annual_income_paise or 0) > 0:
         score += 0.1

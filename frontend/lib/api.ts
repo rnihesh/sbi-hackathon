@@ -8,7 +8,7 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 export const API_V1 = "/api/v1"
 
-/** Fired on `window` when a session could not be refreshed after a 401 — callers
+/** Fired on `window` when a session could not be refreshed after a 401 - callers
  * (see `lib/auth.tsx`) listen for this to hard-reset auth state to anonymous. */
 export const SESSION_EXPIRED_EVENT = "sarathi:session-expired"
 
@@ -18,7 +18,7 @@ function notifySessionExpired() {
   }
 }
 
-/** Endpoints that legitimately 401 without an existing session — never worth a
+/** Endpoints that legitimately 401 without an existing session - never worth a
  * refresh+retry round-trip (refresh itself would also 401). */
 const NO_AUTH_RETRY_SUFFIXES = [
   "/auth/refresh",
@@ -157,7 +157,7 @@ function parseSseChunk(chunk: string): SseEvent | null {
 
 /**
  * Consumes a `text/event-stream` endpoint via fetch + ReadableStream (not the
- * EventSource API — we need POST bodies, custom headers and cookie credentials,
+ * EventSource API - we need POST bodies, custom headers and cookie credentials,
  * none of which EventSource supports).
  */
 export async function sseStream(

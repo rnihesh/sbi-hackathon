@@ -81,7 +81,7 @@ export function SignInSheet({
       onSignedIn(me)
     } catch (err) {
       if (err instanceof DOMException && err.name === "NotAllowedError") {
-        // User dismissed the passkey prompt — no error toast needed.
+        // User dismissed the passkey prompt - no error toast needed.
       } else {
         toast.error(err instanceof ApiError ? err.message : "Passkey sign-in failed")
       }

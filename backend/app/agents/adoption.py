@@ -1,4 +1,4 @@
-"""Adoption agent — drives feature usage for existing customers.
+"""Adoption agent - drives feature usage for existing customers.
 
 Detects dormancy signals deterministically (no UPI in 30 days, large idle
 balance without an FD, protection gaps), then drafts nudges, proposes impactful
@@ -52,7 +52,7 @@ _WALKTHROUGHS: dict[str, dict[str, Any]] = {
             "Open 'Deposits' → 'Open Fixed Deposit'.",
             "Enter the amount and choose a tenure.",
             "Pick the interest payout (cumulative or monthly).",
-            "Confirm — the FD is created instantly from your savings balance.",
+            "Confirm - the FD is created instantly from your savings balance.",
         ],
     },
     "netbanking": {
@@ -79,9 +79,9 @@ autopay/FD/netbanking, and act on idle money.
 Guidance:
 - Call get_usage_snapshot first to see real dormancy signals before advising.
 - Use start_walkthrough for 'how do I…' requests (topics: upi_setup, autopay, fd_booking, \
-netbanking) — the app renders the steps.
+netbanking) - the app renders the steps.
 - Use draft_nudge for a gentle in-app suggestion.
-- Use propose_action for impactful outreach (e.g. an email offer) — it goes to a human \
+- Use propose_action for impactful outreach (e.g. an email offer) - it goes to a human \
 approval queue, it does NOT send automatically.
 Keep replies concrete and encouraging. Customer holds: {held}. Recent context: {mem}."""
 

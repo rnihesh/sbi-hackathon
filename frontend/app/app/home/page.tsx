@@ -85,7 +85,7 @@ export default function HomePage() {
           <motion.div variants={staggerItem} className="flex flex-col gap-3">
             <h2 className="text-sm font-medium text-muted-foreground">Recent activity</h2>
             {dashboard.recent_transactions.length === 0 ? (
-              <EmptyPanel label="No transactions yet — they'll show up here as they happen." />
+              <EmptyPanel label="No transactions yet - they'll show up here as they happen." />
             ) : (
               <div className="divide-y divide-border rounded-xl border border-border">
                 {dashboard.recent_transactions.map((txn) => {
@@ -123,7 +123,7 @@ export default function HomePage() {
           <motion.div variants={staggerItem} className="flex flex-col gap-3">
             <h2 className="text-sm font-medium text-muted-foreground">Holdings</h2>
             {dashboard.holdings.length === 0 ? (
-              <EmptyPanel label="No products yet — Sarathi will suggest some as you chat." />
+              <EmptyPanel label="No products yet - Sarathi will suggest some as you chat." />
             ) : (
               <div className="flex flex-wrap gap-2">
                 {dashboard.holdings.map((holding) => (

@@ -3,7 +3,7 @@
 Writes one ``agent_runs`` row per run and one ``agent_steps`` row per node
 transition / LLM call / tool call / guardrail decision. Uses its **own** short
 sessions and commits per step, so the trace survives even if the run's main
-transaction later rolls back — the trace explorer is a jury feature and must be
+transaction later rolls back - the trace explorer is a jury feature and must be
 trustworthy. Costs/tokens are rolled up onto the run at ``finish``.
 """
 

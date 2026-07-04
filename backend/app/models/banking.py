@@ -46,6 +46,11 @@ class Transaction(UUIDPKMixin, Base):
     account_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
     )
+    # Sim/event-stream idempotency key (``app.sim.generator.Txn.event_id``). Nullable so
+    # rows inserted before this column existed (none in practice) stay valid; every row
+    # written by the seed script or the live event consumer sets it, and the unique
+    # index is what makes the consumer's "same event_id twice -> one Transaction" safe.
+    event_id: Mapped[str | None] = mapped_column(sa.String(64), unique=True, nullable=True)
     ts: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     amount_paise: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     direction: Mapped[TxnDirection] = enum_col(TxnDirection, nullable=False)

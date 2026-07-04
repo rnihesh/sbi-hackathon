@@ -3,7 +3,7 @@ interface FunnelStage {
   count: number
 }
 
-/** Horizontal funnel bars — pure CSS, no chart library. Bar width is relative
+/** Horizontal funnel bars - pure CSS, no chart library. Bar width is relative
  * to the first stage's count; the caption between stages shows the raw
  * conversion percentage from the previous stage. */
 export function FunnelBars({ stages }: { stages: FunnelStage[] }) {

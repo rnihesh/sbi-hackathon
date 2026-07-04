@@ -32,7 +32,7 @@ export default function CustomerAppLayout({
             <Skeleton className="h-32 w-full rounded-xl" />
             <Skeleton className="h-32 w-full rounded-xl" />
           </div>
-        ) : null /* anonymous — redirect effect above is firing */}
+        ) : null /* anonymous - redirect effect above is firing */}
       </main>
       <BottomTabBar />
     </div>

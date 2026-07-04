@@ -10,7 +10,7 @@ CSRF posture
 ------------
 State-changing auth routes (``/auth/*``, ``/me`` mutations) are cookie-authenticated
 with ``SameSite=Lax`` and CORS locked to a known, explicit, credentialed origin
-(``settings.cors_origins`` — no wildcard). We deliberately do *not* add a double-submit
+(``settings.cors_origins`` - no wildcard). We deliberately do *not* add a double-submit
 CSRF token on top of that:
 
 - ``SameSite=Lax`` already withholds the cookie on cross-site *subresource* requests
@@ -22,11 +22,11 @@ CSRF token on top of that:
   preflight/response stage) and a bare `<form>` POST cannot read the response or attach
   custom headers/JSON bodies our routes require.
 - Every mutating route here expects a JSON body (`Content-Type: application/json`),
-  which is not a "simple request" and forces a CORS preflight — another cross-origin
+  which is not a "simple request" and forces a CORS preflight - another cross-origin
   gate a plain HTML form cannot satisfy.
 
 A double-submit token would add real value only if we accepted `SameSite=None` cookies,
-served non-JSON form posts, or trusted a wildcard/multi-tenant CORS origin — none of
+served non-JSON form posts, or trusted a wildcard/multi-tenant CORS origin - none of
 which apply. We *do* add the standard origin-bound nonces for the two ceremonies that
 need them regardless of cookie posture: the OAuth ``state`` parameter (signed, itsdangerous)
 and WebAuthn challenges (single-use, Redis-backed, short TTL).
@@ -177,7 +177,7 @@ async def revoke_session(user_id: str, jti: str) -> None:
 async def revoke_session_from_refresh_token(refresh_token: str) -> None:
     """Best-effort revoke of whatever session ``refresh_token`` names (used on logout).
 
-    Silently no-ops on a malformed/expired token — logout must always succeed.
+    Silently no-ops on a malformed/expired token - logout must always succeed.
     """
     try:
         payload = decode_token(refresh_token, expected_type=TokenType.REFRESH)

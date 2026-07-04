@@ -49,7 +49,7 @@ export function OtpInput({
       return
     }
     if (clean.length > 1) {
-      // Pasted content landed in a single box — distribute across the rest.
+      // Pasted content landed in a single box - distribute across the rest.
       const next = [...digits]
       let cursor = index
       for (const char of clean) {

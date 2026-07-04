@@ -25,7 +25,7 @@ config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata
 
 # Tables owned by LangGraph's Postgres checkpointer (created via
-# AsyncPostgresSaver.setup(), not Alembic) — excluded from autogenerate
+# AsyncPostgresSaver.setup(), not Alembic) - excluded from autogenerate
 # comparison so `alembic check` stays clean.
 EXTERNAL_TABLES = {
     "checkpoints",

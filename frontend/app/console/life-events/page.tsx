@@ -37,7 +37,7 @@ export default function LifeEventsPage() {
     <div className="mx-auto max-w-3xl">
       <ConsolePageHeader
         title="Life Events"
-        description="Job changes, new children, home intent — detected as they happen."
+        description="Job changes, new children, home intent - detected as they happen."
       />
 
       {error && (

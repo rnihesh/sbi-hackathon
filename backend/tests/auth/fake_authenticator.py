@@ -2,7 +2,7 @@
 
 Implements just enough of the WebAuthn ceremony (ES256 / "none" attestation) to produce
 credentials/assertions that `py_webauthn`'s own `verify_registration_response` /
-`verify_authentication_response` genuinely accept — no browser or hardware key involved,
+`verify_authentication_response` genuinely accept - no browser or hardware key involved,
 but no verification logic is stubbed out either; the real signature checks run.
 """
 

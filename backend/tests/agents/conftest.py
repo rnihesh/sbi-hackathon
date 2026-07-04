@@ -3,7 +3,7 @@
 Uses a real Postgres test database (``sarathi_test``, pgvector enabled) so vector
 recall, the audit hash-chain, and tracing exercise real SQL. LLM traffic is
 served by a deterministic :class:`FakeRouter` (scripted tool calls + text); no
-network. Every runtime path stays real — only the model is faked.
+network. Every runtime path stays real - only the model is faked.
 """
 
 from __future__ import annotations

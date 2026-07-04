@@ -8,8 +8,8 @@ export type ConsoleAccess = "loading" | "granted" | "forbidden"
 
 /**
  * Probes a lightweight console endpoint to determine whether the signed-in user
- * is staff. The backend has no `is_staff` field on `/me` — `get_current_staff`
- * gates individual console routes instead — so this is the only way to know
+ * is staff. The backend has no `is_staff` field on `/me` - `get_current_staff`
+ * gates individual console routes instead - so this is the only way to know
  * before rendering the console shell.
  *
  * Only an explicit `403` is treated as forbidden. Any other failure (network

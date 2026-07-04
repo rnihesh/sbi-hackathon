@@ -85,7 +85,7 @@ export default function ApprovalsPage() {
       ) : proposals.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border py-16 text-center">
           <CheckCheck className="size-5 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Nothing pending — all proposals are handled.</p>
+          <p className="text-sm text-muted-foreground">Nothing pending - all proposals are handled.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-3">

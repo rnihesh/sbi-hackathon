@@ -2,7 +2,7 @@
 
 Real sends only: if AWS credentials are absent this raises :class:`EmailNotConfigured`
 rather than pretending to succeed. Callers (auth routes, agent tools) must catch that
-and record a "skipped, no creds" outcome — never fabricate a fake send.
+and record a "skipped, no creds" outcome - never fabricate a fake send.
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ async def send_templated(to: str, template_name: str, context: dict[str, Any]) -
     """Render ``template_name`` with ``context`` and send it via SES.
 
     Raises :class:`EmailNotConfigured` (propagated from :func:`send_email`) if AWS creds
-    are absent — callers must catch this, log a warning, and mark the send as
+    are absent - callers must catch this, log a warning, and mark the send as
     ``skipped_no_creds`` rather than assuming success.
     """
     subject_template = _SUBJECT_TEMPLATES.get(template_name, "Sarathi")

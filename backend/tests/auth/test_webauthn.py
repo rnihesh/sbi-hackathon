@@ -1,7 +1,7 @@
 """Passkey registration + login round trip, driven by the real HTTP routes.
 
 `FakeAuthenticator` (tests/auth/fake_authenticator.py) performs real ES256 signing; the
-server-side verification is the genuine `py_webauthn` code path — nothing about the
+server-side verification is the genuine `py_webauthn` code path - nothing about the
 crypto/verification is mocked, only the "browser + hardware key" is simulated.
 """
 

@@ -1,7 +1,7 @@
 [project]
 name = "sarathi-backend"
 version = "0.1.0"
-description = "Sarathi — agentic banking relationship manager (backend)"
+description = "Sarathi - agentic banking relationship manager (backend)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "Nihesh Rachakonda", email = "niheshr03@gmail.com" }]
@@ -87,7 +87,7 @@ ignore = [
 known-first-party = ["app"]
 
 # ----------------------------------------------------------------------------
-# mypy — strict, with pragmatic overrides for untyped third-party libs
+# mypy - strict, with pragmatic overrides for untyped third-party libs
 # ----------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"

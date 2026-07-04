@@ -20,7 +20,7 @@ const TYPE_LABEL: Record<FeedItemType, string> = {
 
 export function FeedItemRow({ item }: { item: FeedItem }) {
   const Icon = TYPE_ICON[item.type] ?? Activity
-  // Proposals need a human decision — give them the one spot of accent color.
+  // Proposals need a human decision - give them the one spot of accent color.
   const isActionable = item.type === "proposal"
 
   return (

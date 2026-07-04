@@ -1,6 +1,6 @@
 /**
  * Shared framer-motion primitives for Sarathi's signature micro-interactions.
- * Keep these subtle — motion should read as "quiet confidence", never gimmicky.
+ * Keep these subtle - motion should read as "quiet confidence", never gimmicky.
  */
 import type { Transition, Variants } from "framer-motion"
 
@@ -31,7 +31,7 @@ export const pageVariants: Variants = {
   exit: { opacity: 0, y: -6, transition: { ...pageTransition, duration: 0.12 } },
 }
 
-/** Active nav-item pill — pair with `layoutId` on the element that should morph. */
+/** Active nav-item pill - pair with `layoutId` on the element that should morph. */
 export const navPillTransition: Transition = springSnappy
 
 export const fadeIn: Variants = {
@@ -50,7 +50,7 @@ export const pressable = {
   transition: springSnappy,
 }
 
-/** Parent container for a staggered list reveal — pair with `staggerItem` on
+/** Parent container for a staggered list reveal - pair with `staggerItem` on
  * each child and `initial="initial" animate="animate"` on both. */
 export const staggerContainer: Variants = {
   initial: {},

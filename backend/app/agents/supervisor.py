@@ -2,7 +2,7 @@
 
 All turns enter and leave through the supervisor. It classifies intent (fast
 tier, JSON mode, India-banking few-shot), routes to a specialist (or answers
-small talk directly), and — after the specialist runs — performs the single
+small talk directly), and - after the specialist runs - performs the single
 compliant synthesis: policy check, mandated-disclosure append, audit, and
 episodic-memory write.
 """
@@ -29,11 +29,11 @@ _CLASSIFIER_SYSTEM = """You are the routing brain of Sarathi, an agentic relatio
 manager for an Indian retail bank (SBI-style). Classify the user's latest message into \
 exactly one intent:
 
-- "acquisition": prospect/onboarding — opening a new account, KYC, becoming a customer, \
+- "acquisition": prospect/onboarding - opening a new account, KYC, becoming a customer, \
 product discovery for someone not yet onboarded.
-- "adoption": an existing customer using/activating features — UPI, autopay, cards, \
+- "adoption": an existing customer using/activating features - UPI, autopay, cards, \
 netbanking, dormant products, "how do I…", balance/usage questions, walkthroughs.
-- "engagement": life events and next-best-action — bonus/raise, new job, new child, home \
+- "engagement": life events and next-best-action - bonus/raise, new job, new child, home \
 buying, retirement, planning, churn/leaving concerns.
 - "smalltalk": greetings, thanks, or general questions needing no account action.
 

@@ -122,7 +122,7 @@ export default function NudgesPage() {
           </div>
           <p className="text-sm font-medium">All caught up</p>
           <p className="max-w-xs text-sm text-muted-foreground">
-            No nudges right now — Sarathi will let you know when something&apos;s worth a look.
+            No nudges right now - Sarathi will let you know when something&apos;s worth a look.
           </p>
         </div>
       ) : (

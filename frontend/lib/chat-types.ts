@@ -2,7 +2,7 @@
  * Chat domain types + SSE payload normalizers.
  *
  * The `structured` SSE event's `data` shape isn't pinned to a single schema in
- * the contract ("walkthrough steps / product offers") — these normalizers read
+ * the contract ("walkthrough steps / product offers") - these normalizers read
  * a few reasonable field-name variants defensively rather than assuming one
  * exact backend shape, and fall back to a raw-JSON card so nothing is ever
  * silently dropped.
@@ -39,7 +39,7 @@ export interface ChatMessage {
   content: string
   createdAt?: string
   isError?: boolean
-  /** Original user text to resend — set on error bubbles so their retry button
+  /** Original user text to resend - set on error bubbles so their retry button
    * doesn't need a separate "last failed message" side-channel. */
   retryText?: string
   toolActivity?: ToolActivity[]

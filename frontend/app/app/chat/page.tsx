@@ -29,7 +29,7 @@ function newId(): string {
     : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-/** Best-effort JSON parse for an SSE `data:` payload — falls back to `null` so
+/** Best-effort JSON parse for an SSE `data:` payload - falls back to `null` so
  * callers can defensively fall back to the raw string for schema drift. */
 function tryParseJson(raw: string): Record<string, unknown> | null {
   try {
@@ -302,7 +302,7 @@ export default function ChatPage() {
         ) : messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 px-4 text-center">
             <p className="text-sm text-muted-foreground">
-              Ask about your balance, a new deposit, or anything on your mind — Sarathi will
+              Ask about your balance, a new deposit, or anything on your mind - Sarathi will
               walk you through it.
             </p>
             <div className="flex flex-wrap justify-center gap-2">

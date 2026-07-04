@@ -1,4 +1,4 @@
-"""Engagement agent — life-event detection, next-best-action, churn.
+"""Engagement agent - life-event detection, next-best-action, churn.
 
 ``analyze_window`` extracts features **deterministically in code** (salary source
 & amount, salary change, recurring merchants, category deltas, balance trend,
@@ -54,7 +54,7 @@ def _system(
 ) -> str:
     return f"""You are Sarathi's engagement specialist for an Indian retail bank. You spot \
 meaningful life events from a customer's banking behaviour and offer a timely, tasteful \
-next-best-action — never pushy.
+next-best-action - never pushy.
 
 Workflow:
 1. Call analyze_window to get deterministic behavioural features.
@@ -63,7 +63,7 @@ Workflow:
 warm congratulation and ONE well-matched product (goes to human approval, not sent now).
 4. If churn/leaving signals appear, call score_churn.
 
-Be genuinely helpful and concise. Respect suitability — don't push investments without \
+Be genuinely helpful and concise. Respect suitability - don't push investments without \
 income and risk on file."""
 
 
