@@ -2,7 +2,7 @@
 
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { RotateCw } from "lucide-react"
+import { AlertCircle, RotateCw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { SarathiMark } from "@/components/brand/logo"
@@ -53,8 +53,9 @@ export function MessageBubble({
   const hasContent = message.content.trim().length > 0
   const hasToolActivity = (message.toolActivity?.length ?? 0) > 0
   const hasStructured = (message.structured?.length ?? 0) > 0
+  const hasStreamError = Boolean(message.streamError)
 
-  if (!hasContent && !hasToolActivity && !hasStructured) return null
+  if (!hasContent && !hasToolActivity && !hasStructured && !hasStreamError) return null
 
   return (
     <div className="flex items-start gap-2">
@@ -91,6 +92,22 @@ export function MessageBubble({
         {message.structured?.map((payload, index) => (
           <StructuredCard key={index} payload={payload} onOfferCta={onOfferCta} />
         ))}
+        {hasStreamError && (
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">
+            <AlertCircle className="size-3.5 shrink-0" />
+            <span className="flex-1">{message.streamError}</span>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="inline-flex items-center gap-1 font-medium underline-offset-2 hover:underline"
+              >
+                <RotateCw className="size-3" />
+                Retry
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

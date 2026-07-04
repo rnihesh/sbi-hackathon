@@ -2,12 +2,11 @@
 
 import * as React from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { History, MessageSquare, PlusCircle } from "lucide-react"
+import { History, PlusCircle } from "lucide-react"
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError, sseStream } from "@/lib/api"
 import { useMe } from "@/lib/auth"
-import { formatRelativeTime, pluralize } from "@/lib/format"
 import { springSnappy } from "@/lib/motion"
 import { normalizeStructuredPayload } from "@/lib/chat-types"
 import type { ChatMessage, ProductOffer, ToolActivity } from "@/lib/chat-types"
@@ -22,16 +21,33 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { MessageBubble } from "@/components/chat/message-bubble"
 import { ChatComposer } from "@/components/chat/chat-composer"
+import { ChatHistoryList } from "@/components/chat/chat-history"
+import type { ChatSessionSummary } from "@/components/chat/chat-history"
 import { SarathiMark } from "@/components/brand/logo"
 
-interface ChatSessionSummary {
-  conversation_id: string
-  title: string
-  message_count: number
-  updated_at: string
+const CONVERSATION_KEY = "sarathi:conversation_id"
+const DRAFT_PREFIX = "sarathi:draft:"
+
+function draftKey(id: string | null): string {
+  return `${DRAFT_PREFIX}${id ?? "new"}`
 }
 
-const CONVERSATION_KEY = "sarathi:conversation_id"
+function loadDraft(id: string | null): string {
+  try {
+    return sessionStorage.getItem(draftKey(id)) ?? ""
+  } catch {
+    return ""
+  }
+}
+
+function saveDraft(id: string | null, text: string): void {
+  try {
+    if (text) sessionStorage.setItem(draftKey(id), text)
+    else sessionStorage.removeItem(draftKey(id))
+  } catch {
+    // sessionStorage unavailable (private mode / SSR) - drafts are best-effort.
+  }
+}
 
 const SUGGESTIONS = [
   "Open a savings account",
@@ -80,15 +96,19 @@ export default function ChatPage() {
   React.useEffect(() => {
     const stored = sessionStorage.getItem(CONVERSATION_KEY)
     if (!stored) {
+      setInput(loadDraft(null))
       setRestoring(false)
       return
     }
     setConversationId(stored)
+    setInput(loadDraft(stored))
+    autoScrollRef.current = true
     api
       .get<{ messages: { role: string; content: string; created_at: string }[] }>(
         `${API_V1}/chat/sessions/${stored}`
       )
       .then((res) => {
+        autoScrollRef.current = true
         setMessages(
           res.messages
             .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
@@ -101,8 +121,12 @@ export default function ChatPage() {
         )
       })
       .catch(() => {
+        // Backend no longer has this thread (404 / not-yours) - drop the stale
+        // pointer and its draft, and fall back to a fresh composer.
         sessionStorage.removeItem(CONVERSATION_KEY)
+        saveDraft(stored, "")
         setConversationId(null)
+        setInput(loadDraft(null))
       })
       .finally(() => setRestoring(false))
   }, [])
@@ -247,7 +271,13 @@ export default function ChatPage() {
                 (typeof data?.message === "string" && data.message) ||
                 (typeof data?.detail === "string" && data.detail) ||
                 "Sarathi ran into a problem answering that."
-              replaceWithError(message)
+              // If tokens already streamed, keep the partial reply visible and
+              // attach an inline error notice instead of nuking everything.
+              if (assistantContent.trim()) {
+                updateMessage(assistantId, { streamError: message, retryText: text })
+              } else {
+                replaceWithError(message)
+              }
               break
             }
             default:
@@ -258,7 +288,13 @@ export default function ChatPage() {
       )
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
-        replaceWithError(err instanceof ApiError ? err.message : "Connection lost. Please try again.")
+        const message =
+          err instanceof ApiError ? err.message : "Connection lost. Please try again."
+        if (assistantContent.trim() && placedPlaceholder) {
+          updateMessage(assistantId, { streamError: message, retryText: text })
+        } else {
+          replaceWithError(message)
+        }
       }
     } finally {
       setIsStreaming(false)
@@ -266,10 +302,16 @@ export default function ChatPage() {
     }
   }
 
+  function handleInputChange(value: string) {
+    setInput(value)
+    saveDraft(conversationId, value)
+  }
+
   function handleSend(overrideText?: string) {
     const text = (overrideText ?? input).trim()
     if (!text || isStreaming) return
     setInput("")
+    saveDraft(conversationId, "")
     setMessages((prev) => [...prev, { id: newId(), role: "user", content: text }])
     void streamAssistantReply(text)
   }
@@ -284,12 +326,19 @@ export default function ChatPage() {
     abortControllerRef.current?.abort()
   }
 
-  function handleNewConversation() {
+  /** Return the UI to a clean, unbound "New conversation" state (shared by the
+   * New button and by deleting the currently-open thread). */
+  function resetToFresh() {
     if (isStreaming) abortControllerRef.current?.abort()
     sessionStorage.removeItem(CONVERSATION_KEY)
     setConversationId(null)
     setMessages([])
-    setInput("")
+    autoScrollRef.current = true
+    setInput(loadDraft(null))
+  }
+
+  function handleNewConversation() {
+    resetToFresh()
   }
 
   async function openHistory(open: boolean) {
@@ -310,10 +359,15 @@ export default function ChatPage() {
     setRestoring(true)
     setConversationId(session.conversation_id)
     sessionStorage.setItem(CONVERSATION_KEY, session.conversation_id)
+    setInput(loadDraft(session.conversation_id))
+    // Opening an old thread should jump straight to the latest turn, not
+    // smooth-scroll up through its whole history.
+    autoScrollRef.current = true
     try {
       const res = await api.get<{
         messages: { role: string; content: string; created_at: string }[]
       }>(`${API_V1}/chat/sessions/${session.conversation_id}`)
+      autoScrollRef.current = true
       setMessages(
         res.messages
           .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
@@ -328,6 +382,31 @@ export default function ChatPage() {
       toast.error("Couldn't load that conversation")
     } finally {
       setRestoring(false)
+    }
+  }
+
+  async function handleRenameSession(id: string, title: string) {
+    const prev = sessions
+    setSessions((s) => s?.map((x) => (x.conversation_id === id ? { ...x, title } : x)) ?? s)
+    try {
+      await api.patch(`${API_V1}/chat/sessions/${id}`, { title })
+    } catch {
+      setSessions(prev) // rollback optimistic rename
+      toast.error("Couldn't rename conversation")
+    }
+  }
+
+  async function handleDeleteSession(id: string) {
+    const prev = sessions
+    setSessions((s) => s?.filter((x) => x.conversation_id !== id) ?? s)
+    try {
+      await api.delete(`${API_V1}/chat/sessions/${id}`)
+      saveDraft(id, "")
+      if (id === conversationId) resetToFresh()
+    } catch {
+      setSessions(prev) // rollback optimistic removal
+      toast.error("Couldn't delete conversation")
+      throw new Error("delete-failed") // keep the confirm dialog open for retry
     }
   }
 
@@ -355,40 +434,14 @@ export default function ChatPage() {
                 <SheetHeader>
                   <SheetTitle>Conversations</SheetTitle>
                 </SheetHeader>
-                <div className="flex flex-col gap-1 overflow-y-auto px-2 pb-4">
-                  {sessions === null ? (
-                    <div className="flex flex-col gap-2 px-2 pt-2">
-                      <Skeleton className="h-12 w-full rounded-lg" />
-                      <Skeleton className="h-12 w-full rounded-lg" />
-                      <Skeleton className="h-12 w-full rounded-lg" />
-                    </div>
-                  ) : sessions.length === 0 ? (
-                    <p className="px-2 pt-2 text-sm text-muted-foreground">
-                      No conversations yet. Start one and it will show up here.
-                    </p>
-                  ) : (
-                    sessions.map((session) => (
-                      <button
-                        key={session.conversation_id}
-                        onClick={() => void handleOpenConversation(session)}
-                        className={
-                          "flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted " +
-                          (session.conversation_id === conversationId ? "bg-muted" : "")
-                        }
-                      >
-                        <MessageSquare className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">
-                            {session.title}
-                          </span>
-                          <span className="block text-xs text-muted-foreground">
-                            {formatRelativeTime(session.updated_at)} ·{" "}
-                            {pluralize(session.message_count, "message")}
-                          </span>
-                        </span>
-                      </button>
-                    ))
-                  )}
+                <div className="overflow-y-auto px-2 pb-4">
+                  <ChatHistoryList
+                    sessions={sessions}
+                    activeId={conversationId}
+                    onOpen={(session) => void handleOpenConversation(session)}
+                    onRename={handleRenameSession}
+                    onDelete={handleDeleteSession}
+                  />
                 </div>
               </SheetContent>
             </Sheet>
@@ -453,7 +506,7 @@ export default function ChatPage() {
       <div className="shrink-0 pt-2">
         <ChatComposer
           value={input}
-          onChange={setInput}
+          onChange={handleInputChange}
           onSend={() => handleSend()}
           onStop={handleStop}
           isStreaming={isStreaming}

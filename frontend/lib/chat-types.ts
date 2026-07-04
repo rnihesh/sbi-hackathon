@@ -42,6 +42,10 @@ export interface ChatMessage {
   content: string
   createdAt?: string
   isError?: boolean
+  /** Set on an assistant bubble when the stream failed *after* partial tokens
+   * already arrived: the partial text stays visible and this renders as a subtle
+   * inline notice (with retry) instead of nuking the whole reply. */
+  streamError?: string
   /** Original user text to resend - set on error bubbles so their retry button
    * doesn't need a separate "last failed message" side-channel. */
   retryText?: string

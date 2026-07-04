@@ -23,6 +23,23 @@ class ChatMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
 
 
+class ChatSessionUpdateRequest(BaseModel):
+    """Body for ``PATCH /chat/sessions/{id}`` - rename a conversation.
+
+    ``str_strip_whitespace`` trims first, so a whitespace-only title collapses to
+    ``""`` and fails ``min_length=1`` (422) rather than persisting blank.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=100)
+
+
+class ChatSessionRenameResponse(BaseModel):
+    conversation_id: str
+    title: str
+
+
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,6 +58,7 @@ class ChatSessionSummary(BaseModel):
     conversation_id: str
     title: str
     message_count: int
+    preview: str | None = None
     updated_at: datetime
 
 

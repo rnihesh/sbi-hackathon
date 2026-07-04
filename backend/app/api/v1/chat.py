@@ -15,7 +15,7 @@ from typing import Annotated, Any, cast
 
 import orjson
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -34,7 +34,9 @@ from app.schemas.chat import (
     ChatSessionCreateResponse,
     ChatSessionListResponse,
     ChatSessionOut,
+    ChatSessionRenameResponse,
     ChatSessionSummary,
+    ChatSessionUpdateRequest,
     MessageOut,
 )
 from app.workers.activity import publish_run_result
@@ -53,6 +55,16 @@ def _uuid_or_none(value: str) -> uuid.UUID | None:
         return uuid.UUID(value)
     except (ValueError, TypeError):
         return None
+
+
+def _truncate(text: str | None, limit: int) -> str | None:
+    """Collapse to a single line and clamp to ``limit`` chars (ellipsis if cut)."""
+    if not text:
+        return None
+    flattened = " ".join(text.split())
+    if not flattened:
+        return None
+    return flattened if len(flattened) <= limit else flattened[:limit] + "…"
 
 
 async def _customer_for_user(db: AsyncSession, user: User | None) -> Customer | None:
@@ -242,11 +254,15 @@ async def list_chat_sessions(
     ).all()
 
     first_user_msg: dict[uuid.UUID, str] = {}
+    last_content: dict[uuid.UUID, str] = {}
     counts: dict[uuid.UUID, int] = {}
     last_at: dict[uuid.UUID, Any] = {}
+    # Rows are ordered by (conversation_id, created_at) ascending, so the last
+    # write per conversation wins for `last_content`/`last_at` (the newest turn).
     for conv_id, role, content, created_at in msg_rows:
         counts[conv_id] = counts.get(conv_id, 0) + 1
         last_at[conv_id] = created_at
+        last_content[conv_id] = content
         if role == "user" and conv_id not in first_user_msg:
             first_user_msg[conv_id] = content
 
@@ -262,6 +278,7 @@ async def list_chat_sessions(
                 conversation_id=str(conv.id),
                 title=title,
                 message_count=count,
+                preview=_truncate(last_content.get(conv.id), 80),
                 updated_at=last_at.get(conv.id, conv.created_at),
             )
         )
@@ -275,17 +292,16 @@ async def get_chat_session(
     user: Annotated[User | None, Depends(get_optional_user)] = None,
     db: AsyncSession = Depends(get_db),
 ) -> ChatSessionOut:
-    conv_uuid = _uuid_or_none(conversation_id)
-    if conv_uuid is None:
-        return ChatSessionOut(conversation_id=conversation_id, customer_id=None, messages=[])
+    """Read a conversation transcript.
 
-    conv = await db.get(Conversation, conv_uuid)
-    if conv is None:
-        return ChatSessionOut(conversation_id=conversation_id, customer_id=None, messages=[])
-
+    A missing conversation is a hard ``404`` (not an empty ``200``) so the client
+    can tell "this thread was deleted / never existed" from "this thread is empty"
+    and clear its stale ``sessionStorage`` pointer instead of silently keeping it.
+    """
+    conv = await _get_conversation_or_404(db, conversation_id)
     await _authorize_conversation(conv, user, db)
     result = await db.execute(
-        select(Message).where(Message.conversation_id == conv_uuid).order_by(Message.created_at)
+        select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at)
     )
     messages = result.scalars().all()
     return ChatSessionOut(
@@ -293,3 +309,46 @@ async def get_chat_session(
         customer_id=conv.customer_id,
         messages=[MessageOut.model_validate(m) for m in messages],
     )
+
+
+async def _get_conversation_or_404(db: AsyncSession, conversation_id: str) -> Conversation:
+    conv_uuid = _uuid_or_none(conversation_id)
+    conv = await db.get(Conversation, conv_uuid) if conv_uuid is not None else None
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+
+@router.patch("/sessions/{conversation_id}", response_model=ChatSessionRenameResponse)
+async def rename_chat_session(
+    conversation_id: str,
+    payload: ChatSessionUpdateRequest,
+    user: Annotated[User | None, Depends(get_optional_user)] = None,
+    db: AsyncSession = Depends(get_db),
+) -> ChatSessionRenameResponse:
+    """Rename a conversation (owner only). Title is stripped and 1-100 chars."""
+    conv = await _get_conversation_or_404(db, conversation_id)
+    await _authorize_conversation(conv, user, db)
+    conv.title = payload.title
+    await db.commit()
+    return ChatSessionRenameResponse(conversation_id=conversation_id, title=payload.title)
+
+
+@router.delete("/sessions/{conversation_id}")
+async def delete_chat_session(
+    conversation_id: str,
+    user: Annotated[User | None, Depends(get_optional_user)] = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Delete a conversation and its messages (owner only).
+
+    Messages cascade at the DB level via the ``ondelete="CASCADE"`` FK (a Core
+    ``DELETE`` is used rather than ``session.delete`` so no async lazy-load of the
+    messages collection is triggered mid-flush). LangGraph checkpointer rows
+    (keyed by ``thread_id`` in a separate pool) are left orphaned-but-harmless.
+    """
+    conv = await _get_conversation_or_404(db, conversation_id)
+    await _authorize_conversation(conv, user, db)
+    await db.execute(delete(Conversation).where(Conversation.id == conv.id))
+    await db.commit()
+    return {"status": "deleted", "conversation_id": conversation_id}

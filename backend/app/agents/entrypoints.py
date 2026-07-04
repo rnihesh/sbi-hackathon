@@ -21,6 +21,9 @@ from datetime import UTC, datetime
 from inspect import isawaitable
 from typing import Any
 
+import orjson
+from sqlalchemy import select
+
 from app.agents.actions import create_nudge
 from app.agents.checkpointer import init_checkpointer
 from app.agents.context import AgentContext, EventEmitter
@@ -30,6 +33,7 @@ from app.agents.state import turn_input
 from app.agents.tracing import RunTracer
 from app.core.db import get_sessionmaker
 from app.core.logging import get_logger
+from app.llm.base import ChatMessage
 from app.llm.embeddings import get_embedder
 from app.llm.router import get_router
 from app.models.conversation import Conversation, Message
@@ -139,6 +143,10 @@ async def run_chat_turn(
     resolved_cid = _uuid_or_none(final_state.get("customer_id")) or cid
     if resolved_cid is not None and final_text:
         await _persist_message(conversation_id, resolved_cid, MessageRole.ASSISTANT, final_text)
+        # After the turn's reply lands, fire-and-forget an LLM title for the
+        # thread. Deduped on `title IS NULL`, so only the first completed turn
+        # (that persists a reply) sticks; never delays or fails this response.
+        _spawn_title_generation(conversation_id)
 
     yield {
         "type": "done",
@@ -172,6 +180,101 @@ async def _persist_message(
             await session.commit()
     except Exception as exc:
         logger.warning("persist_message_failed", role=role.value, error=str(exc))
+
+
+# ===========================================================================
+# Conversation titles (fire-and-forget, LLM fast tier)
+# ===========================================================================
+
+_TITLE_SYSTEM = (
+    "You name a banking chat thread. Given the customer's first message and the "
+    "assistant's first reply, return JSON exactly as {\"title\": \"...\"}. The "
+    "title must be 3 to 6 words, Title Case, plain text with no quotes, no "
+    "trailing punctuation, and no emoji. Capture the topic (e.g. \"Opening A "
+    "Savings Account\", \"UPI Setup Help\"). Do not use the words chat, "
+    "conversation, or assistant."
+)
+
+_title_tasks: set[asyncio.Task[None]] = set()
+"""Strong refs to in-flight title tasks so they are not GC'd mid-flight; tests
+await these to make the fire-and-forget deterministic."""
+
+
+def _spawn_title_generation(conversation_id: str) -> None:
+    """Schedule :func:`_maybe_generate_title` without awaiting it (fire-and-forget)."""
+    try:
+        task = asyncio.create_task(_maybe_generate_title(conversation_id))
+    except RuntimeError:
+        return  # no running loop (sync context) - skip silently
+    _title_tasks.add(task)
+    task.add_done_callback(_title_tasks.discard)
+
+
+async def _maybe_generate_title(conversation_id: str) -> None:
+    """Generate and persist a short LLM title for ``conversation_id``.
+
+    Dedup: only when ``Conversation.title IS NULL`` (the first completed turn
+    wins; later turns no-op). Runs in its own session and swallows every error
+    so it can never delay or break the chat response.
+    """
+    conv_id = _uuid_or_none(conversation_id)
+    if conv_id is None:
+        return
+    sm = get_sessionmaker()
+    try:
+        async with sm() as session:
+            conv = await session.get(Conversation, conv_id)
+            if conv is None or conv.title is not None:
+                return  # gone, or already titled - nothing to do
+
+            first_user = await session.scalar(
+                select(Message.content)
+                .where(Message.conversation_id == conv_id, Message.role == MessageRole.USER)
+                .order_by(Message.created_at)
+                .limit(1)
+            )
+            if not first_user:
+                return
+            first_assistant = await session.scalar(
+                select(Message.content)
+                .where(Message.conversation_id == conv_id, Message.role == MessageRole.ASSISTANT)
+                .order_by(Message.created_at)
+                .limit(1)
+            )
+
+            title = await _title_from_llm(first_user, first_assistant or "")
+            if not title:
+                return
+            conv.title = title
+            await session.commit()
+    except Exception as exc:
+        logger.warning("conversation_title_failed", error=str(exc))
+
+
+async def _title_from_llm(user_text: str, assistant_text: str) -> str | None:
+    payload = orjson.dumps(
+        {"user_message": user_text[:600], "assistant_reply": assistant_text[:600]}
+    ).decode()
+    resp = await get_router().chat(
+        tier="fast",
+        messages=[ChatMessage(role="user", content=payload)],
+        system=_TITLE_SYSTEM,
+        json_mode=True,
+        temperature=0.0,
+        purpose="chat:title",
+    )
+    return _parse_title(resp.text)
+
+
+def _parse_title(raw: str) -> str | None:
+    try:
+        data = orjson.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    title = " ".join(str(data.get("title", "")).split())
+    return title[:100] or None
 
 
 # ===========================================================================
