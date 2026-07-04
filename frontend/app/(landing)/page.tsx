@@ -6,8 +6,13 @@ import { ArrowRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { fadeIn } from "@/lib/motion"
+import { useMe } from "@/lib/auth"
+import { useSignInSheet } from "@/components/auth/sign-in-sheet-context"
 
 export default function LandingPage() {
+  const { status } = useMe()
+  const { setOpen } = useSignInSheet()
+
   return (
     <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-4 py-20 text-center sm:gap-8 sm:px-6 sm:py-32">
       <motion.div
@@ -28,12 +33,19 @@ export default function LandingPage() {
           and the life events in between. No queues, no jargon, no waiting.
         </p>
 
-        <Button size="lg" asChild className="px-6">
-          <Link href="/app/home">
+        {status === "authenticated" ? (
+          <Button size="lg" asChild className="px-6">
+            <Link href="/app/home">
+              Open an account in 5 minutes
+              <ArrowRight data-icon="inline-end" />
+            </Link>
+          </Button>
+        ) : (
+          <Button size="lg" className="px-6" onClick={() => setOpen(true)}>
             Open an account in 5 minutes
             <ArrowRight data-icon="inline-end" />
-          </Link>
-        </Button>
+          </Button>
+        )}
       </motion.div>
     </section>
   )

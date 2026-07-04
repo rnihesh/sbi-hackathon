@@ -5,7 +5,29 @@
  * `credentials: "include"` so httpOnly session cookies flow automatically.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+export const API_V1 = "/api/v1"
+
+/** Fired on `window` when a session could not be refreshed after a 401 — callers
+ * (see `lib/auth.tsx`) listen for this to hard-reset auth state to anonymous. */
+export const SESSION_EXPIRED_EVENT = "sarathi:session-expired"
+
+function notifySessionExpired() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
+  }
+}
+
+/** Endpoints that legitimately 401 without an existing session — never worth a
+ * refresh+retry round-trip (refresh itself would also 401). */
+const NO_AUTH_RETRY_SUFFIXES = [
+  "/auth/refresh",
+  "/auth/logout",
+  "/auth/otp/send",
+  "/auth/otp/verify",
+  "/auth/passkey/login/begin",
+  "/auth/passkey/login/complete",
+]
 
 export class ApiError extends Error {
   readonly status: number
@@ -23,14 +45,34 @@ type JsonBody = Record<string, unknown> | unknown[]
 
 interface RequestOptions extends Omit<RequestInit, "body"> {
   body?: JsonBody
+  /** Internal: set on the retried request to prevent a refresh-retry loop. */
+  skipAuthRetry?: boolean
 }
 
 function hasDetail(value: unknown): value is { detail: unknown } {
   return typeof value === "object" && value !== null && "detail" in value
 }
 
+let refreshInFlight: Promise<boolean> | null = null
+
+/** Rotates the session via `POST /auth/refresh`, de-duped across concurrent 401s. */
+function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = request<{ message: string }>(`${API_V1}/auth/refresh`, {
+      method: "POST",
+      skipAuthRetry: true,
+    })
+      .then(() => true)
+      .catch(() => false)
+      .finally(() => {
+        refreshInFlight = null
+      })
+  }
+  return refreshInFlight
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body, headers, ...rest } = options
+  const { body, headers, skipAuthRetry, ...rest } = options
 
   const res = await fetch(`${API_URL}${path}`, {
     ...rest,
@@ -49,6 +91,18 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     : await res.text().catch(() => undefined)
 
   if (!res.ok) {
+    if (
+      res.status === 401 &&
+      !skipAuthRetry &&
+      !NO_AUTH_RETRY_SUFFIXES.some((suffix) => path.endsWith(suffix))
+    ) {
+      const refreshed = await refreshSession()
+      if (refreshed) {
+        return request<T>(path, { ...options, skipAuthRetry: true })
+      }
+      notifySessionExpired()
+    }
+
     const message = hasDetail(payload) ? String(payload.detail) : res.statusText
     throw new ApiError(message, res.status, payload)
   }
@@ -79,6 +133,8 @@ interface SseStreamOptions {
   method?: "GET" | "POST"
   body?: JsonBody
   signal?: AbortSignal
+  /** Internal: set on the retried connection to prevent a refresh-retry loop. */
+  skipAuthRetry?: boolean
 }
 
 function parseSseChunk(chunk: string): SseEvent | null {
@@ -109,7 +165,7 @@ export async function sseStream(
   onEvent: (event: SseEvent) => void,
   options: SseStreamOptions = {}
 ): Promise<void> {
-  const { method = "POST", body, signal } = options
+  const { method = "POST", body, signal, skipAuthRetry } = options
 
   const res = await fetch(`${API_URL}${path}`, {
     method,
@@ -123,6 +179,13 @@ export async function sseStream(
   })
 
   if (!res.ok || !res.body) {
+    if (res.status === 401 && !skipAuthRetry) {
+      const refreshed = await refreshSession()
+      if (refreshed) {
+        return sseStream(path, onEvent, { ...options, skipAuthRetry: true })
+      }
+      notifySessionExpired()
+    }
     throw new ApiError(`SSE request failed: ${res.statusText}`, res.status, undefined)
   }
 

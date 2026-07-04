@@ -49,3 +49,15 @@ export const pressable = {
   whileTap: { scale: 0.98 },
   transition: springSnappy,
 }
+
+/** Parent container for a staggered list reveal — pair with `staggerItem` on
+ * each child and `initial="initial" animate="animate"` on both. */
+export const staggerContainer: Variants = {
+  initial: {},
+  animate: { transition: { staggerChildren: 0.06 } },
+}
+
+export const staggerItem: Variants = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0, transition: springSnappy },
+}
