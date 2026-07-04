@@ -7,6 +7,7 @@ Hard rules:
 - Do not commit or push — the advisor session handles all git operations.
 - `docs/` is untracked internal material; keep it out of git.
 - Production quality: typed (mypy strict / TS strict), tested, no stubs on demo paths.
+- NO demo shortcuts: every feature must genuinely work end-to-end. No hardcoded fake responses, no Math.random() dashboard numbers, no if-demo branches. Synthetic data is allowed ONLY as the data source (sim engine, privacy story) — all logic, agents, APIs, emails, auth must be real and correct.
 - UI: Aperture theme (stone neutrals, clay-orange #D97757 accent only, Geist fonts), minimal, micro-interactions, fully responsive (mobile-first for customer app).
 - Backend: Python 3.12, uv, FastAPI, LangGraph, SQLAlchemy 2.0 async, Alembic, Postgres+pgvector, Redis Streams.
 - Frontend: Next.js 15 App Router, TypeScript, Tailwind, shadcn/ui, framer-motion, pnpm.
