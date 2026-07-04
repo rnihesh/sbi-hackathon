@@ -1,0 +1,79 @@
+# Sarathi VPS stack: shared host with other projects.
+#
+# Uses the HOST's Postgres 16 (+pgvector) and Redis instead of containers, and
+# host networking so services bind loopback-only ports nginx proxies to:
+#   backend  -> 127.0.0.1:8100
+#   frontend -> 127.0.0.1:3100
+# (3000/8000 are taken by other projects on this box.)
+#
+# Run from the repo root:
+#   docker compose -f infra/docker-compose.vps.yml build
+#   docker compose -f infra/docker-compose.vps.yml run --rm migrate
+#   docker compose -f infra/docker-compose.vps.yml up -d backend worker frontend
+#
+# Reads config from repo-root .env (DATABASE_URL/REDIS_URL point at
+# localhost, which is the host itself under network_mode: host).
+
+x-backend-build: &backend-build
+  context: ../backend
+  dockerfile: ../infra/Dockerfile.backend
+
+services:
+  migrate:
+    build: *backend-build
+    image: sarathi-backend:prod
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    network_mode: host
+    env_file:
+      - ../.env
+
+  backend:
+    build: *backend-build
+    image: sarathi-backend:prod
+    restart: unless-stopped
+    command:
+      [
+        "uvicorn", "app.main:app",
+        "--host", "127.0.0.1", "--port", "8100",
+        "--proxy-headers", "--forwarded-allow-ips", "*",
+      ]
+    network_mode: host
+    env_file:
+      - ../.env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  worker:
+    build: *backend-build
+    image: sarathi-backend:prod
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.event_consumer"]
+    network_mode: host
+    env_file:
+      - ../.env
+    healthcheck:
+      disable: true
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../infra/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://sarathi-api.niheshr.com}
+    image: sarathi-frontend:prod
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      PORT: "3100"
+      HOSTNAME: 127.0.0.1
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3100/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
