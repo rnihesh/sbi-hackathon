@@ -15,12 +15,15 @@ export interface ToolActivity {
   result?: unknown
 }
 
+/** Mirrors the acquisition agent's `match_products` structured payload exactly
+ * (verified live: `{code, name, category, score, reasons}` - `reasons` is a
+ * list, not a single string). */
 export interface ProductOffer {
-  code?: string
+  code: string
   name: string
-  category?: string
-  reason?: string
-  cta?: string
+  category: string
+  score: number
+  reasons: string[]
 }
 
 export interface WalkthroughStep {
@@ -56,20 +59,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function normalizeOffer(raw: unknown): ProductOffer | null {
   const obj = asRecord(raw)
   if (!obj) return null
-  const product = asRecord(obj.product)
-  const name = obj.name ?? product?.name
+  const name = obj.name
   if (typeof name !== "string") return null
+  const reasonsRaw = Array.isArray(obj.reasons) ? obj.reasons : []
   return {
-    code: typeof obj.code === "string" ? obj.code : typeof product?.code === "string" ? product.code : undefined,
+    code: typeof obj.code === "string" ? obj.code : "",
     name,
-    category:
-      typeof obj.category === "string"
-        ? obj.category
-        : typeof product?.category === "string"
-          ? product.category
-          : undefined,
-    reason: typeof obj.reason === "string" ? obj.reason : typeof obj.rationale === "string" ? obj.rationale : undefined,
-    cta: typeof obj.cta === "string" ? obj.cta : typeof obj.action === "string" ? obj.action : undefined,
+    category: typeof obj.category === "string" ? obj.category : "",
+    score: typeof obj.score === "number" && Number.isFinite(obj.score) ? obj.score : 0,
+    reasons: reasonsRaw.filter((r): r is string => typeof r === "string"),
   }
 }
 
@@ -88,17 +86,25 @@ export function normalizeStructuredPayload(data: unknown): StructuredPayload {
   const obj = asRecord(data)
   if (obj) {
     const kind = typeof obj.type === "string" ? obj.type : typeof obj.kind === "string" ? obj.kind : undefined
-    const offersRaw = obj.offers ?? obj.products ?? obj.product_offers
+    const offersRaw = obj.offers
     if (Array.isArray(offersRaw) && (kind === undefined || kind.includes("product") || kind.includes("offer"))) {
       const offers = offersRaw.map(normalizeOffer).filter((o): o is ProductOffer => o !== null)
       if (offers.length > 0) return { kind: "product_offers", offers }
     }
 
-    const stepsRaw = obj.steps ?? obj.walkthrough
-    if (Array.isArray(stepsRaw) && (kind === undefined || kind.includes("walkthrough") || kind.includes("step"))) {
+    // Real wire shape: obj.walkthrough is an object {topic, title, steps: string[]},
+    // with obj.steps as a tolerated flat fallback.
+    const walkthrough = asRecord(obj.walkthrough)
+    const stepsRaw = Array.isArray(obj.steps)
+      ? obj.steps
+      : walkthrough && Array.isArray(walkthrough.steps)
+        ? walkthrough.steps
+        : undefined
+    if (stepsRaw && (kind === undefined || kind.includes("walkthrough") || kind.includes("step"))) {
       const steps = stepsRaw.map(normalizeStep).filter((s): s is WalkthroughStep => s !== null)
       if (steps.length > 0) {
-        return { kind: "walkthrough", title: typeof obj.title === "string" ? obj.title : undefined, steps }
+        const title = walkthrough?.title ?? walkthrough?.topic ?? obj.title
+        return { kind: "walkthrough", title: typeof title === "string" ? title : undefined, steps }
       }
     }
   }

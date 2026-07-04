@@ -44,7 +44,9 @@ export function LifeEventRow({ event }: { event: LifeEventItem }) {
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">{formatRelativeTime(event.detected_at)}</p>
           <p className="text-sm font-medium">{humanizeIdentifier(event.type)}</p>
-          <p className="text-xs text-muted-foreground capitalize">{event.status}</p>
+          <p className="text-xs text-muted-foreground">
+            {event.customer.full_name} &middot; <span className="capitalize">{event.status}</span>
+          </p>
           {hasEvidence && (
             <button
               type="button"

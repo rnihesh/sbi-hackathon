@@ -164,6 +164,7 @@ class CostsResponse(BaseModel):
     total_tokens_in: int
     total_tokens_out: int
     total_cost_usd: Decimal
+    avg_latency_ms: int | None
     by_provider: list[CostBreakdownRow]
     by_model: list[CostBreakdownRow]
     by_tier: list[CostBreakdownRow]

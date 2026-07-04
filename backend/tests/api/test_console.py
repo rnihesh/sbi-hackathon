@@ -318,7 +318,7 @@ async def test_costs_aggregates(
         LlmCall(
             provider="openai", model="gpt-4.1-mini", tier=LlmTier.FAST,
             tokens_in=100, tokens_out=50, cost_usd=Decimal("0.001"), ok=True,
-            purpose="supervisor:classify",
+            purpose="supervisor:classify", latency_ms=400,
         )
     )
     await db.commit()
@@ -328,7 +328,22 @@ async def test_costs_aggregates(
     body = resp.json()
     assert body["total_calls"] == 1
     assert body["total_tokens_in"] == 100
+    assert body["avg_latency_ms"] == 400
     assert any(row["key"] == "openai" for row in body["by_provider"])
+
+
+async def test_costs_avg_latency_null_when_no_calls(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+
+    resp = await client.get("/api/v1/console/costs", cookies=auth_cookies(staff_user))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_calls"] == 0
+    assert body["avg_latency_ms"] is None
 
 
 async def test_sim_inject_event_validates_customer_and_persona(

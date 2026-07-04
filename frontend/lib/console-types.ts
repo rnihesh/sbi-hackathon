@@ -27,14 +27,18 @@ export interface Proposal {
   created_at: string
 }
 
-/**
- * `GET /console/leads` isn't pinned to an exact response schema in the Wave 3
- * contract - this reads the `Lead` ORM model's field names (`name`, `email`,
- * `phone`, `intent_score`, `stage`) but tolerates a couple of common alternate
- * key spellings defensively via `normalizeLead`.
- */
+export interface LeadCustomer {
+  id: string
+  full_name: string
+}
+
+/** Mirrors `app.schemas.console.LeadOut` exactly (verified against a live
+ * `GET /console/leads` response) - `customer` is `null` for prospects who
+ * haven't converted into a linked `Customer` yet. */
 export interface Lead {
   id: string
+  customer: LeadCustomer | null
+  source: string
   name: string | null
   email: string | null
   phone: string | null
@@ -43,9 +47,16 @@ export interface Lead {
   created_at: string
 }
 
+export interface LifeEventCustomer {
+  id: string
+  full_name: string
+}
+
+/** Mirrors `app.schemas.console.LifeEventOut` - note the wire field is the
+ * nested `customer` object, not a bare `customer_id`. */
 export interface LifeEventItem {
   id: string
-  customer_id: string
+  customer: LifeEventCustomer
   type: string
   confidence: number
   evidence: Record<string, unknown>
@@ -53,16 +64,36 @@ export interface LifeEventItem {
   status: string
 }
 
-export interface FunnelStageCounts {
-  [stage: string]: number
+/** Mirrors `app.schemas.console.AcquisitionFunnel`. */
+export interface AcquisitionFunnel {
+  leads: number
+  qualified: number
+  kyc_verified: number
+  account_opened: number
 }
 
+/** Mirrors `app.schemas.console.NudgeFunnel`. */
+export interface NudgeFunnel {
+  sent: number
+  seen: number
+  acted: number
+}
+
+/** Mirrors `app.schemas.console.HoldingCategoryFunnel`. */
+export interface HoldingCategoryFunnel {
+  category: string
+  offered: number
+  active: number
+}
+
+/** Mirrors `app.schemas.console.FunnelResponse` exactly (verified against a
+ * live `GET /console/funnels` response) - `nudges` is top-level (not nested
+ * under an `adoption` key) and holdings are a per-category breakdown list,
+ * not a flat stage-count map. */
 export interface FunnelsResponse {
-  acquisition: FunnelStageCounts
-  adoption: {
-    nudges: FunnelStageCounts
-    holdings: FunnelStageCounts
-  }
+  acquisition: AcquisitionFunnel
+  nudges: NudgeFunnel
+  holdings_by_category: HoldingCategoryFunnel[]
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -79,31 +110,138 @@ function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0
 }
 
-/** Normalizes a raw lead row, tolerating `full_name`/`contact` alternates. */
+function customerRef(value: unknown): { id: string; full_name: string } | null {
+  const obj = asRecord(value)
+  if (!obj) return null
+  const id = str(obj.id)
+  const fullName = str(obj.full_name)
+  return id && fullName ? { id, full_name: fullName } : null
+}
+
+/** Runtime guard for a raw `GET /console/leads` row - the wire shape is pinned to
+ * `LeadOut` (verified live), so this only guards against malformed/missing fields
+ * rather than guessing alternate key spellings. */
 export function normalizeLead(raw: unknown, index: number): Lead | null {
   const obj = asRecord(raw)
   if (!obj) return null
   return {
     id: str(obj.id) ?? `lead-${index}`,
-    name: str(obj.name) ?? str(obj.full_name),
+    customer: customerRef(obj.customer),
+    source: str(obj.source) ?? "unknown",
+    name: str(obj.name),
     email: str(obj.email),
-    phone: str(obj.phone) ?? str(obj.contact),
-    intent_score: num(obj.intent_score ?? obj.score),
-    stage: str(obj.stage) ?? str(obj.funnel_stage) ?? "new",
+    phone: str(obj.phone),
+    intent_score: num(obj.intent_score),
+    stage: str(obj.stage) ?? "new",
     created_at: str(obj.created_at) ?? new Date(0).toISOString(),
   }
 }
 
+/** Runtime guard for a raw `GET /console/life-events` row - pinned to
+ * `LifeEventOut` (verified live); `customer` is always present, not `customer_id`. */
 export function normalizeLifeEvent(raw: unknown, index: number): LifeEventItem | null {
   const obj = asRecord(raw)
   if (!obj) return null
   return {
     id: str(obj.id) ?? `life-event-${index}`,
-    customer_id: str(obj.customer_id) ?? "",
+    customer: customerRef(obj.customer) ?? { id: "", full_name: "Unknown customer" },
     type: str(obj.type) ?? "unknown",
     confidence: num(obj.confidence),
     evidence: asRecord(obj.evidence) ?? {},
-    detected_at: str(obj.detected_at) ?? str(obj.created_at) ?? new Date(0).toISOString(),
+    detected_at: str(obj.detected_at) ?? new Date(0).toISOString(),
     status: str(obj.status) ?? "detected",
   }
+}
+
+// ---------------------------------------------------------------------------
+// Traces (glass box) - mirrors `app.schemas.console.{TraceOut,TraceStepOut,
+// TraceDetailResponse}` exactly (verified against live `GET /console/traces`
+// and `GET /console/traces/{run_id}` responses). `cost_usd` is a backend
+// `Decimal`, which FastAPI/Pydantic serializes as a JSON string - parse with
+// `Number(...)` before formatting.
+// ---------------------------------------------------------------------------
+
+export type AgentTrigger = "chat" | "event"
+export type AgentRunStatusValue = "running" | "completed" | "failed" | "cancelled"
+export type AgentStepKind = "llm" | "tool" | "guardrail"
+
+export interface TraceCustomer {
+  id: string
+  full_name: string
+}
+
+export interface TraceSummary {
+  run_id: string
+  agent: string
+  trigger: string
+  status: string
+  customer: TraceCustomer | null
+  started_at: string
+  latency_ms: number | null
+  tokens_in: number
+  tokens_out: number
+  cost_usd: string
+  steps_count: number
+}
+
+export interface TraceStep {
+  seq: number
+  node: string
+  kind: string
+  name: string
+  input: Record<string, unknown> | null
+  output: Record<string, unknown> | null
+  model: string | null
+  tokens_in: number
+  tokens_out: number
+  cost_usd: string
+  latency_ms: number | null
+}
+
+export interface TraceDetail {
+  run_id: string
+  agent: string
+  trigger: string
+  status: string
+  customer: TraceCustomer | null
+  started_at: string
+  finished_at: string | null
+  tokens_in: number
+  tokens_out: number
+  cost_usd: string
+  latency_ms: number | null
+  steps: TraceStep[]
+}
+
+// ---------------------------------------------------------------------------
+// Costs (glass box) - mirrors `app.schemas.console.{CostBreakdownRow,
+// CostSeriesPoint,CostsResponse}` exactly (verified against a live
+// `GET /console/costs` response).
+// ---------------------------------------------------------------------------
+
+export interface CostBreakdownRow {
+  key: string
+  calls: number
+  tokens_in: number
+  tokens_out: number
+  cost_usd: string
+}
+
+export interface CostSeriesPoint {
+  hour: string
+  cost_usd: string
+  calls: number
+}
+
+export interface CostsResponse {
+  total_calls: number
+  total_tokens_in: number
+  total_tokens_out: number
+  total_cost_usd: string
+  avg_latency_ms: number | null
+  by_provider: CostBreakdownRow[]
+  by_model: CostBreakdownRow[]
+  by_tier: CostBreakdownRow[]
+  by_purpose: CostBreakdownRow[]
+  last_24h: CostSeriesPoint[]
 }

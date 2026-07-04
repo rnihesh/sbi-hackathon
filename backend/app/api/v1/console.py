@@ -537,10 +537,12 @@ async def get_costs(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> Cos
                 func.coalesce(func.sum(LlmCall.tokens_in), 0),
                 func.coalesce(func.sum(LlmCall.tokens_out), 0),
                 func.coalesce(func.sum(LlmCall.cost_usd), 0),
+                func.avg(LlmCall.latency_ms),
             ).select_from(LlmCall)
         )
     ).one()
-    total_calls, total_tokens_in, total_tokens_out, total_cost = totals
+    total_calls, total_tokens_in, total_tokens_out, total_cost, avg_latency = totals
+    avg_latency_ms = round(avg_latency) if avg_latency is not None else None
 
     by_provider = await _breakdown(db, LlmCall.provider)
     by_model = await _breakdown(db, LlmCall.model)
@@ -548,7 +550,12 @@ async def get_costs(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> Cos
     by_purpose = await _breakdown(db, func.coalesce(LlmCall.purpose, "unspecified"))
 
     since = datetime.now(UTC) - timedelta(hours=24)
-    hour_bucket = func.date_trunc("hour", LlmCall.created_at)
+    # Explicit 'UTC' third arg: `date_trunc(field, source)` truncates in the
+    # session's `TimeZone` GUC (e.g. Asia/Kolkata in this deployment), which
+    # would bucket to `:30`-past-the-hour boundaries instead of the top of
+    # the UTC hour the frontend's 24h chart assumes - the 3-arg form pins
+    # the truncation to UTC regardless of session timezone.
+    hour_bucket = func.date_trunc("hour", LlmCall.created_at, "UTC")
     series_result = await db.execute(
         select(hour_bucket, func.coalesce(func.sum(LlmCall.cost_usd), 0), func.count())
         .where(LlmCall.created_at >= since)
@@ -565,6 +572,7 @@ async def get_costs(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> Cos
         total_tokens_in=total_tokens_in,
         total_tokens_out=total_tokens_out,
         total_cost_usd=total_cost,
+        avg_latency_ms=avg_latency_ms,
         by_provider=by_provider,
         by_model=by_model,
         by_tier=by_tier,

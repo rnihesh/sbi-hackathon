@@ -53,6 +53,9 @@ export function ChatComposer({
       <div className="flex items-end gap-2 rounded-xl border border-input bg-background p-1.5 shadow-sm focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
         <textarea
           ref={textareaRef}
+          id="chat-composer-input"
+          name="message"
+          aria-label="Message"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}

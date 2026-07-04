@@ -18,6 +18,41 @@ export function formatSignedPaise(paise: number, direction: "credit" | "debit"):
   return direction === "credit" ? `+${amount}` : `-${amount}`
 }
 
+const usd = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 6,
+})
+
+/** Formats an LLM cost (USD, may arrive as a `Decimal` wire string) with at
+ * least 4 decimal places - tiny per-call costs (e.g. $0.000059) stay legible
+ * instead of rounding to zero. */
+export function formatUsd(value: number | string): string {
+  const n = typeof value === "string" ? Number(value) : value
+  return usd.format(Number.isFinite(n) ? n : 0)
+}
+
+const integerFormatter = new Intl.NumberFormat("en-US")
+
+/** Thousands-grouped integer (token counts, call counts). */
+export function formatCount(value: number): string {
+  return integerFormatter.format(Math.round(value))
+}
+
+/** Renders a millisecond duration as "342ms" / "1.4s" / "13.2s". */
+export function formatLatency(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return "-"
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+/** Picks the singular or plural form of a noun for `count` (e.g. "1 call" vs
+ * "83 calls"). */
+export function pluralize(count: number, singular: string, plural: string = `${singular}s`): string {
+  return count === 1 ? singular : plural
+}
+
 const relativeTimeFormatter = new Intl.RelativeTimeFormat("en-IN", { numeric: "auto" })
 
 const DIVISIONS: Array<{ amount: number; unit: Intl.RelativeTimeFormatUnit }> = [

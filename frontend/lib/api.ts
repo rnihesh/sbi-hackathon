@@ -91,8 +91,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     : await res.text().catch(() => undefined)
 
   if (!res.ok) {
+    // 403 is included alongside 401: routes behind *optional* auth (chat's
+    // session/message endpoints - anonymous prospects are a valid caller)
+    // resolve an expired access token to "anonymous" rather than a 401, so an
+    // ownership check ("is this your conversation") fails as a 403 instead.
+    // Every other 403 in this API sits behind hard-required auth (a 401
+    // already fires first for a stale token), so retrying once after a
+    // refresh costs at most one harmless extra round trip there.
     if (
-      res.status === 401 &&
+      (res.status === 401 || res.status === 403) &&
       !skipAuthRetry &&
       !NO_AUTH_RETRY_SUFFIXES.some((suffix) => path.endsWith(suffix))
     ) {
@@ -135,6 +142,11 @@ interface SseStreamOptions {
   signal?: AbortSignal
   /** Internal: set on the retried connection to prevent a refresh-retry loop. */
   skipAuthRetry?: boolean
+  /** Fired once the HTTP stream is actually connected (before the first event
+   * arrives) - callers use this to flip a "connecting" indicator to "live"
+   * even if the stream stays idle (e.g. a keep-alive-only SSE ping) for a
+   * while before the first real event. */
+  onOpen?: () => void
 }
 
 function parseSseChunk(chunk: string): SseEvent | null {
@@ -165,7 +177,7 @@ export async function sseStream(
   onEvent: (event: SseEvent) => void,
   options: SseStreamOptions = {}
 ): Promise<void> {
-  const { method = "POST", body, signal, skipAuthRetry } = options
+  const { method = "POST", body, signal, skipAuthRetry, onOpen } = options
 
   const res = await fetch(`${API_URL}${path}`, {
     method,
@@ -179,7 +191,13 @@ export async function sseStream(
   })
 
   if (!res.ok || !res.body) {
-    if (res.status === 401 && !skipAuthRetry) {
+    // Chat's ownership check (`_authorize_conversation`) sits behind *optional*
+    // auth (anonymous prospects are a valid caller) - an expired access token
+    // therefore resolves to "anonymous" rather than a 401, and only then fails
+    // the "is this your conversation" check as a 403. So a stale-token retry
+    // has to cover 403 here too, not just 401, or a chat session silently stops
+    // recovering the moment its 15-minute access token first expires.
+    if ((res.status === 401 || res.status === 403) && !skipAuthRetry) {
       const refreshed = await refreshSession()
       if (refreshed) {
         return sseStream(path, onEvent, { ...options, skipAuthRetry: true })
@@ -188,6 +206,8 @@ export async function sseStream(
     }
     throw new ApiError(`SSE request failed: ${res.statusText}`, res.status, undefined)
   }
+
+  onOpen?.()
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -199,7 +219,16 @@ export async function sseStream(
     done = result.done
 
     if (result.value) {
-      buffer += decoder.decode(result.value, { stream: true })
+      // The SSE spec permits "\r\n", "\r", or bare "\n" as the line terminator,
+      // and `sse_starlette` (the backend's implementation) defaults to "\r\n" -
+      // normalize to "\n" so the "\n\n" event-boundary split below actually
+      // matches instead of silently buffering (and eventually discarding)
+      // every event of the stream.
+      const decoded = decoder
+        .decode(result.value, { stream: true })
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+      buffer += decoded
       const chunks = buffer.split("\n\n")
       buffer = chunks.pop() ?? ""
 

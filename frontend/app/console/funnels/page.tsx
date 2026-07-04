@@ -6,26 +6,22 @@ import { api, API_V1, ApiError } from "@/lib/api"
 import type { FunnelsResponse } from "@/lib/console-types"
 import { ConsolePageHeader } from "@/components/console/page-header"
 import { FunnelBars } from "@/components/console/funnel-bars"
+import { HoldingsCategoryBars } from "@/components/console/holdings-category-bars"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
 const ACQUISITION_STAGES = [
-  { key: "lead", label: "Lead" },
+  { key: "leads", label: "Leads" },
   { key: "qualified", label: "Qualified" },
-  { key: "kyc", label: "KYC" },
-  { key: "opened", label: "Opened" },
-]
+  { key: "kyc_verified", label: "KYC Verified" },
+  { key: "account_opened", label: "Account Opened" },
+] as const
 
 const NUDGE_STAGES = [
   { key: "sent", label: "Sent" },
   { key: "seen", label: "Seen" },
   { key: "acted", label: "Acted" },
-]
-
-const HOLDING_STAGES = [
-  { key: "offered", label: "Offered" },
-  { key: "active", label: "Active" },
-]
+] as const
 
 export default function FunnelsPage() {
   const [data, setData] = React.useState<FunnelsResponse | null>(null)
@@ -81,7 +77,7 @@ export default function FunnelsPage() {
               <FunnelBars
                 stages={ACQUISITION_STAGES.map((s) => ({
                   label: s.label,
-                  count: data.acquisition?.[s.key] ?? 0,
+                  count: data.acquisition[s.key] ?? 0,
                 }))}
               />
             </CardContent>
@@ -95,7 +91,7 @@ export default function FunnelsPage() {
               <FunnelBars
                 stages={NUDGE_STAGES.map((s) => ({
                   label: s.label,
-                  count: data.adoption?.nudges?.[s.key] ?? 0,
+                  count: data.nudges[s.key] ?? 0,
                 }))}
               />
             </CardContent>
@@ -103,15 +99,10 @@ export default function FunnelsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Holding adoption</CardTitle>
+              <CardTitle>Holdings by category</CardTitle>
             </CardHeader>
             <CardContent>
-              <FunnelBars
-                stages={HOLDING_STAGES.map((s) => ({
-                  label: s.label,
-                  count: data.adoption?.holdings?.[s.key] ?? 0,
-                }))}
-              />
+              <HoldingsCategoryBars categories={data.holdings_by_category} />
             </CardContent>
           </Card>
         </>

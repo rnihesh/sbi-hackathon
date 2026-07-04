@@ -52,7 +52,13 @@ export function useSse<T>(path: string, options?: { enabled?: boolean }) {
               // Malformed payload - drop the event rather than crash the feed.
             }
           },
-          { method: "GET", signal: controller.signal }
+          {
+            method: "GET",
+            signal: controller.signal,
+            onOpen: () => {
+              if (!cancelled) setStatus("open")
+            },
+          }
         )
       } catch {
         // Connection error - fall through to the reconnect scheduling below.

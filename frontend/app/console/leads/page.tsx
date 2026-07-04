@@ -74,7 +74,7 @@ export default function LeadsPage() {
                     </Badge>
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    {lead.email ?? lead.phone ?? "No contact on file"}
+                    {lead.email ?? lead.phone ?? "No contact on file"} &middot; via {lead.source}
                   </span>
                   <IntentScoreBar score={lead.intent_score} />
                   <span className="text-xs text-muted-foreground">
@@ -103,7 +103,7 @@ export default function LeadsPage() {
                     <td className="px-4 py-3">
                       <p className="font-medium">{lead.name ?? "Unnamed lead"}</p>
                       <p className="text-xs text-muted-foreground">
-                        {lead.email ?? lead.phone ?? "No contact on file"}
+                        {lead.email ?? lead.phone ?? "No contact on file"} &middot; via {lead.source}
                       </p>
                     </td>
                     <td className="px-4 py-3">

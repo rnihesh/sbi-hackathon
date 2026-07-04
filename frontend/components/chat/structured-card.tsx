@@ -23,11 +23,19 @@ function ProductOfferCard({ offer, onCta }: { offer: ProductOffer; onCta?: (offe
             </Badge>
           )}
         </div>
-        {offer.reason && <p className="text-sm text-muted-foreground">{offer.reason}</p>}
+        {offer.reasons.length > 0 && (
+          <ul className="flex flex-col gap-0.5">
+            {offer.reasons.map((reason, i) => (
+              <li key={i} className="text-sm text-muted-foreground">
+                {reason}
+              </li>
+            ))}
+          </ul>
+        )}
         {onCta && (
           <motion.div {...pressable} className="self-start">
             <Button size="sm" variant="outline" onClick={() => onCta(offer)}>
-              {offer.cta ?? "Tell me more"}
+              Tell me more
             </Button>
           </motion.div>
         )}
