@@ -17,7 +17,7 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents import memory
 from app.agents.context import AgentContext
-from app.agents.state import AgentState
+from app.agents.state import AgentState, set_structured
 from app.agents.supervisor import run_specialist
 from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
 from app.models.crm import Lead
@@ -195,7 +195,11 @@ async def _match_products(ctx: AgentContext, state: AgentState, args: ToolArgs) 
         risk_appetite=args.get("risk_appetite"),
     )
     candidates = match_products(profile, limit=int(args.get("limit", 4) or 4))
-    return {"candidates": [c.as_dict() for c in candidates], "kyc_status": bag.get("status")}
+    offers = [c.as_dict() for c in candidates]
+    # Surface offers as structured payload so the frontend renders real offer
+    # cards instead of relying on the model summarizing them into prose.
+    set_structured(state, "offers", offers)
+    return {"candidates": offers, "kyc_status": bag.get("status")}
 
 
 async def _open_account(ctx: AgentContext, state: AgentState, args: ToolArgs) -> ToolResult:
