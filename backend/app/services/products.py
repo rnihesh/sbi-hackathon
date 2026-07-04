@@ -1,9 +1,15 @@
-"""Product catalog + deterministic eligibility matching.
+"""Product catalog, eligibility filtering, and LLM-driven ranking.
 
-The **rules** here decide eligibility and surface product-gap reasons; the LLM
-(in the adoption/engagement agents) only writes the final pitch. This split is
-deliberate: suitability and eligibility must be auditable and reproducible, so
-they live in code, not in a prompt.
+Two layers, deliberately split:
+
+- **Eligibility** (:func:`_is_eligible`) is a hard, code-only compliance filter:
+  age bands, income floors, and segment gating. Suitability rules that must be
+  auditable and reproducible stay in code, never in a prompt.
+- **Ranking + reasons** (:func:`rank_products`) is an LLM call (fast tier, JSON
+  mode) over the *already-eligible* catalog. The model's output is validated
+  against the eligible codes (hallucinated products are dropped - a guardrail,
+  not determinism). If the LLM fails entirely, we fall back to the deterministic
+  :func:`match_products` ranking so the demo path never breaks.
 
 Money fields are paise (integer). ``annual_income_paise`` etc.
 """
@@ -12,14 +18,22 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+import orjson
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
+from app.llm.base import ChatMessage
 from app.models.catalog import Holding, Product
 from app.models.enums import HoldingStatus
+
+if TYPE_CHECKING:
+    from app.llm.router import LLMRouter
+
+logger = get_logger(__name__)
 
 _RUPEE = 100  # paise per rupee
 
@@ -340,6 +354,145 @@ def match_products(
         )
     candidates.sort(key=lambda c: (-c.score, c.code))
     return candidates[:limit]
+
+
+# ---------------------------------------------------------------------------
+# LLM ranking (eligibility stays a hard code filter; ranking is the model's job)
+# ---------------------------------------------------------------------------
+
+_RANK_SYSTEM = """You are a product-suitability ranker for an Indian retail bank (SBI). \
+You are given a customer profile and a list of ELIGIBLE products - the customer has already \
+passed every hard eligibility and compliance check for each one. Rank them from most to \
+least suitable for THIS specific customer and justify each with concrete, profile-grounded \
+reasons (dependents, idle balance, income, held products, life stage, digital maturity). \
+Recommend ONLY from the products provided - never invent a product code. Respond with ONLY \
+JSON: {"ranked": [{"code": "<code from the list>", "score": <0.0-1.0>, "reasons": \
+["short reason", ...]}]}."""
+
+
+def _eligible_specs(profile: CustomerProfile) -> list[dict[str, Any]]:
+    """Not-yet-held catalog entries that pass the hard eligibility filter."""
+    held = set(profile.held_product_codes)
+    return [
+        spec
+        for spec in CATALOG
+        if spec["code"] not in held and _is_eligible(spec, profile)
+    ]
+
+
+def _profile_summary(profile: CustomerProfile) -> dict[str, Any]:
+    """A compact, rupee-denominated profile the model can reason over."""
+    income = profile.annual_income_paise
+    idle = profile.idle_balance_paise
+    return {
+        "age": profile.age,
+        "annual_income_rupees": income // _RUPEE if income is not None else None,
+        "segment": profile.segment,
+        "dependents": profile.dependents,
+        "idle_balance_rupees": idle // _RUPEE if idle is not None else None,
+        "risk_appetite": profile.risk_appetite,
+        "digital_maturity": profile.digital_maturity,
+        "held_products": profile.held_product_codes,
+    }
+
+
+def _parse_ranked(
+    raw: str, eligible: list[dict[str, Any]], limit: int
+) -> list[ProductCandidate] | None:
+    """Validate the model's ranking against the eligible set.
+
+    Drops hallucinated or duplicate codes (guardrail). Returns ``None`` when the
+    output is unusable so the caller falls back to the deterministic ranking.
+    """
+    try:
+        data = orjson.loads(raw)
+    except Exception:
+        return None
+    items = data.get("ranked") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return None
+    by_code = {spec["code"]: spec for spec in eligible}
+    out: list[ProductCandidate] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code", ""))
+        spec = by_code.get(code)
+        if spec is None or code in seen:  # hallucinated or duplicate -> reject
+            continue
+        seen.add(code)
+        try:
+            score = float(item.get("score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        score = max(0.0, min(1.0, score))
+        raw_reasons = item.get("reasons")
+        reasons = (
+            [str(r).strip() for r in raw_reasons if str(r).strip()][:3]
+            if isinstance(raw_reasons, list)
+            else []
+        )
+        if not reasons:
+            reasons = [f"you are eligible for the {spec['name']}"]
+        out.append(
+            ProductCandidate(
+                code=code,
+                name=spec["name"],
+                category=spec["category"],
+                score=round(score, 3),
+                reasons=reasons,
+            )
+        )
+    if not out:
+        return None
+    return out[:limit]
+
+
+async def rank_products(
+    profile: CustomerProfile, *, router: LLMRouter, limit: int = 5
+) -> list[ProductCandidate]:
+    """Eligibility-filter then LLM-rank not-yet-held products for a customer.
+
+    The hard eligibility filter is code (compliance); the ranking + per-product
+    reasons are an LLM call validated against the eligible codes. Any failure
+    (LLM error, empty/garbled output, all-hallucinated codes) falls back to the
+    deterministic :func:`match_products` ranking, so this never returns nothing
+    when eligible products exist.
+    """
+    eligible = _eligible_specs(profile)
+    if not eligible:
+        return []
+    catalog = [
+        {
+            "code": spec["code"],
+            "name": spec["name"],
+            "category": spec["category"],
+            "description": spec.get("description", ""),
+        }
+        for spec in eligible
+    ]
+    payload = orjson.dumps(
+        {"customer": _profile_summary(profile), "eligible_products": catalog}
+    ).decode()
+    try:
+        resp = await router.chat(
+            tier="fast",
+            messages=[ChatMessage(role="user", content=payload)],
+            system=_RANK_SYSTEM,
+            json_mode=True,
+            temperature=0.0,
+            purpose="match_products",
+        )
+        ranked = _parse_ranked(resp.text, eligible, limit)
+    except Exception as exc:
+        logger.warning("product_rank_llm_failed", error=str(exc))
+        ranked = None
+    if ranked is None:
+        # Fallback: deterministic rule ranking (same eligibility set) so the
+        # demo path never breaks. Logged above when the failure was an exception.
+        return match_products(profile, limit=limit)
+    return ranked
 
 
 # ---------------------------------------------------------------------------

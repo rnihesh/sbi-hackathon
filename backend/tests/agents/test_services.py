@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import orjson
 import pytest
 
+from app.llm.base import LLMError
 from app.models.customer import Customer
 from app.services import kyc, ledger
 from app.services.kyc import KycStatus
 from app.services.ledger import LedgerError
-from app.services.products import CustomerProfile, match_products
+from app.services.products import CustomerProfile, match_products, rank_products
+from tests.agents.conftest import FakeRouter, make_response
 
 # ---------------------------------------------------------------------------
 # KYC
@@ -131,3 +134,99 @@ def test_match_products_idle_balance_recommends_fd() -> None:
     fd = next((c for c in candidates if c.code == "fixed_deposit"), None)
     assert fd is not None
     assert any("idle" in r.lower() for r in fd.reasons)
+
+
+# ---------------------------------------------------------------------------
+# Product ranking (LLM ranks; eligibility stays a hard code filter)
+# ---------------------------------------------------------------------------
+
+
+def _rank_router(ranked: object) -> FakeRouter:
+    payload = orjson.dumps(ranked).decode()
+    return FakeRouter(lambda **_: make_response(payload))
+
+
+async def test_rank_products_uses_llm_order_and_reasons() -> None:
+    profile = CustomerProfile(
+        annual_income_paise=800_000 * 100,
+        age=35,
+        segment="salaried",
+        dependents=2,
+        held_product_codes=["savings_account"],
+    )
+    router = _rank_router(
+        {
+            "ranked": [
+                {"code": "term_insurance", "score": 0.95, "reasons": ["2 dependents, no cover"]},
+                {"code": "mutual_fund_sip", "score": 0.7, "reasons": ["income supports a SIP"]},
+            ]
+        }
+    )
+
+    result = await rank_products(profile, router=router, limit=5)
+
+    assert [c.code for c in result] == ["term_insurance", "mutual_fund_sip"]
+    assert result[0].reasons == ["2 dependents, no cover"]
+    assert result[0].name == "SBI Life Term Insurance"  # enriched from catalog
+    call = router.calls[0]
+    assert call["tier"] == "fast"
+    assert call["json_mode"] is True
+    assert call["purpose"] == "match_products"
+
+
+async def test_rank_products_rejects_hallucinated_codes() -> None:
+    profile = CustomerProfile(
+        annual_income_paise=800_000 * 100, age=35, segment="salaried", dependents=1,
+        held_product_codes=["savings_account"],
+    )
+    router = _rank_router(
+        {
+            "ranked": [
+                {"code": "crypto_wallet", "score": 0.99, "reasons": ["hallucinated"]},
+                {"code": "term_insurance", "score": 0.8, "reasons": ["real gap"]},
+            ]
+        }
+    )
+
+    result = await rank_products(profile, router=router, limit=5)
+    codes = [c.code for c in result]
+
+    assert "crypto_wallet" not in codes  # not in the eligible set -> dropped
+    assert "term_insurance" in codes
+
+
+async def test_rank_products_falls_back_to_rules_on_llm_failure() -> None:
+    profile = CustomerProfile(
+        annual_income_paise=800_000 * 100, age=35, segment="salaried", dependents=2,
+        held_product_codes=["savings_account"],
+    )
+
+    def _boom(**_: object) -> object:
+        raise LLMError("provider down")
+
+    result = await rank_products(profile, router=FakeRouter(_boom), limit=5)
+
+    # Deterministic fallback still surfaces the insurance gap for dependents.
+    assert any(c.code == "term_insurance" for c in result)
+
+
+async def test_rank_products_empty_output_falls_back_to_rules() -> None:
+    profile = CustomerProfile(
+        annual_income_paise=800_000 * 100, age=35, segment="salaried", dependents=2,
+        held_product_codes=["savings_account"],
+    )
+    router = _rank_router({"ranked": []})  # valid JSON but no usable rows
+
+    result = await rank_products(profile, router=router, limit=5)
+    assert result  # fell back to rules, not empty
+    assert all(c.code != "savings_account" for c in result)  # still not-held only
+
+
+async def test_rank_products_no_eligible_returns_empty_without_llm() -> None:
+    profile = CustomerProfile(age=5)  # below every product's min age
+    router = _rank_router({"ranked": [{"code": "savings_account", "score": 1.0, "reasons": []}]})
+
+    result = await rank_products(profile, router=router, limit=5)
+
+    assert result == []
+    assert router.calls == []  # LLM never consulted when nothing is eligible

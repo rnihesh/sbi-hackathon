@@ -87,6 +87,11 @@ class LLMRouter:
             tier: self._build_chain(tier) for tier in ("fast", "smart")
         }
 
+        # Purpose -> preferred (provider, model_override) routing, config-driven.
+        self._purpose_routing: dict[str, tuple[str, str | None]] = (
+            self._settings.llm_purpose_routing_map
+        )
+
     def _build_chain(self, tier: str) -> list[tuple[str, str]]:
         chain: list[tuple[str, str]] = []
         for name in PROVIDER_ORDER:
@@ -101,6 +106,40 @@ class LLMRouter:
     def available_providers(self, tier: str | LlmTier = "smart") -> list[str]:
         """Provider names (in order) that will be tried for ``tier``."""
         return [name for name, _ in self._chains.get(str(tier), [])]
+
+    def _preferred_provider(self, purpose: str | None) -> tuple[str, str | None] | None:
+        """Return the ``(provider, model_override)`` preferred for ``purpose``.
+
+        A routing key matches when it equals any ':'-separated segment of the
+        purpose (so ``"classify"`` matches ``"supervisor:classify"``). Returns
+        ``None`` when no rule applies - the caller then uses plain chain order.
+        """
+        if not purpose or not self._purpose_routing:
+            return None
+        segments = purpose.split(":")
+        for key, target in self._purpose_routing.items():
+            if key == purpose or key in segments:
+                return target
+        return None
+
+    def _chain_for(self, tier_str: str, purpose: str | None) -> list[tuple[str, str]]:
+        """The tier chain, reordered so a purpose's preferred provider goes first.
+
+        If the preferred provider has no credentials for this tier it is absent
+        from the chain and the normal order stands (the fallback chain is
+        untouched). An optional model override replaces that provider's model.
+        """
+        chain = list(self._chains.get(tier_str, []))
+        preferred = self._preferred_provider(purpose)
+        if preferred is None:
+            return chain
+        name, model_override = preferred
+        idx = next((i for i, (candidate, _) in enumerate(chain) if candidate == name), None)
+        if idx is None:
+            return chain
+        _, model = chain.pop(idx)
+        chain.insert(0, (name, model_override or model))
+        return chain
 
     async def chat(
         self,
@@ -120,7 +159,7 @@ class LLMRouter:
         Raises :class:`LLMRouterError` if every configured provider fails.
         """
         tier_str = str(tier)
-        chain = self._chains.get(tier_str, [])
+        chain = self._chain_for(tier_str, purpose)
         if not chain:
             raise LLMRouterError(
                 f"no providers with credentials for tier {tier_str!r}; "
@@ -205,7 +244,7 @@ class LLMRouter:
         usage + cost.
         """
         tier_str = str(tier)
-        chain = self._chains.get(tier_str, [])
+        chain = self._chain_for(tier_str, purpose)
         if not chain:
             raise LLMRouterError(
                 f"no providers with credentials for tier {tier_str!r}; "

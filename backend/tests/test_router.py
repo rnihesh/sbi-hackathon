@@ -184,3 +184,74 @@ async def test_smart_tier_prefers_openai_when_all_available() -> None:
     )
     resp = await router.chat(tier="smart", messages=MESSAGES)
     assert resp.provider == "openai"  # first in PROVIDER_ORDER
+
+
+# ---------------------------------------------------------------------------
+# Purpose-based provider routing
+# ---------------------------------------------------------------------------
+
+
+def test_purpose_routing_map_parses_provider_and_optional_model() -> None:
+    mapping = _settings().llm_purpose_routing_map
+    assert mapping["classify"] == ("gemini", "gemini-2.5-flash-lite")
+    assert mapping["embedding"] == ("openai", None)
+
+
+async def test_purpose_routing_prefers_mapped_provider_and_model_override() -> None:
+    openai = FakeProvider("openai")
+    gemini = FakeProvider("gemini")
+    router = LLMRouter(
+        settings=_settings(), providers={"openai": openai, "gemini": gemini}
+    )
+
+    # "classify" segment of the purpose maps to gemini + a model override, even
+    # though openai is first in PROVIDER_ORDER.
+    resp = await router.chat(tier="fast", messages=MESSAGES, purpose="supervisor:classify")
+
+    assert resp.provider == "gemini"
+    assert len(gemini.calls) == 1
+    assert gemini.calls[0]["model"] == "gemini-2.5-flash-lite"  # override applied
+    assert len(openai.calls) == 0  # preferred provider reached first
+
+
+async def test_purpose_routing_falls_back_when_preferred_fails() -> None:
+    gemini = FakeProvider("gemini", fail=True)
+    openai = FakeProvider("openai")
+    router = LLMRouter(
+        settings=_settings(), providers={"openai": openai, "gemini": gemini}
+    )
+
+    resp = await router.chat(tier="fast", messages=MESSAGES, purpose="supervisor:classify")
+
+    # Preferred gemini failed -> the normal fallback chain still applies.
+    assert resp.provider == "openai"
+    assert len(gemini.calls) == 1
+    assert len(openai.calls) == 1
+
+
+async def test_purpose_routing_unknown_purpose_uses_chain_order() -> None:
+    openai = FakeProvider("openai")
+    gemini = FakeProvider("gemini")
+    router = LLMRouter(
+        settings=_settings(), providers={"openai": openai, "gemini": gemini}
+    )
+
+    resp = await router.chat(tier="smart", messages=MESSAGES, purpose="engagement:score_churn")
+
+    assert resp.provider == "openai"  # no rule -> PROVIDER_ORDER
+    assert len(gemini.calls) == 0
+
+
+async def test_purpose_routing_skips_preferred_without_credentials() -> None:
+    openai = FakeProvider("openai")
+    gemini = FakeProvider("gemini", credentials=False)
+    router = LLMRouter(
+        settings=_settings(), providers={"openai": openai, "gemini": gemini}
+    )
+
+    resp = await router.chat(tier="fast", messages=MESSAGES, purpose="supervisor:classify")
+
+    # Gemini is preferred but has no key -> normal chain, openai answers.
+    assert resp.provider == "openai"
+    assert len(gemini.calls) == 0
+    assert len(openai.calls) == 1

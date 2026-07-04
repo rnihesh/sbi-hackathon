@@ -169,6 +169,98 @@ async def test_mid_stream_failure_propagates_and_does_not_switch() -> None:
     assert gemini.stream_calls == 0  # never switched
 
 
+async def test_stream_empty_completion_yields_no_deltas_then_done() -> None:
+    # Provider produces zero deltas but a well-formed StreamDone (empty text).
+    provider = FakeStreamProvider("openai", deltas=[], usage=(4, 0))
+    router = LLMRouter(settings=_settings(), providers={"openai": provider})
+
+    deltas, done = await _drain(router, tier="smart")
+
+    assert deltas == []
+    assert done is not None
+    assert done.text == ""
+    assert done.provider == "openai"
+    assert done.tokens_out == 0
+
+
+async def test_stream_provider_without_streamdone_gets_synthesised_done() -> None:
+    # A provider that yields deltas but forgets the terminal StreamDone: the
+    # router must still emit one (synthesised) so callers always finalise.
+    class _NoDoneProvider:
+        def has_credentials(self) -> bool:
+            return True
+
+        async def chat(self, *_a: object, **_k: object) -> LLMResponse:  # pragma: no cover
+            raise NotImplementedError
+
+        async def stream_chat(
+            self, _messages: Sequence[ChatMessage], *, model: str, **_kwargs: object
+        ) -> AsyncIterator[StreamEvent]:
+            yield TextDelta("orphan")
+
+    router = LLMRouter(settings=_settings(), providers={"openai": _NoDoneProvider()})
+
+    deltas, done = await _drain(router, tier="smart")
+
+    assert deltas == ["orphan"]
+    assert done is not None
+    assert done.provider == "openai"  # synthesised terminal response
+
+
+async def test_stream_long_completion_passes_every_delta_through() -> None:
+    # A large stream: the router forwards each delta without accumulating an
+    # internal buffer (final text/usage come from the provider's StreamDone).
+    chunks = [f"tok{i} " for i in range(2000)]
+    provider = FakeStreamProvider("openai", deltas=chunks, usage=(3, 2000))
+    router = LLMRouter(settings=_settings(), providers={"openai": provider})
+
+    deltas, done = await _drain(router, tier="smart")
+
+    assert len(deltas) == 2000
+    assert deltas == chunks
+    assert done is not None
+    assert done.tokens_out == 2000
+
+
+async def test_stream_cancellation_propagates_and_does_not_fall_through() -> None:
+    # asyncio.CancelledError is a BaseException, not Exception: the router must
+    # NOT swallow it into a fallback. It propagates so the caller's tracer can
+    # finish cleanly, and no second provider is tried.
+    class _CancelMidStreamProvider:
+        def __init__(self, name: str) -> None:
+            self.provider = name
+            self.stream_calls = 0
+
+        def has_credentials(self) -> bool:
+            return True
+
+        async def chat(self, *_a: object, **_k: object) -> LLMResponse:  # pragma: no cover
+            raise NotImplementedError
+
+        async def stream_chat(
+            self, _messages: Sequence[ChatMessage], *, model: str, **_kwargs: object
+        ) -> AsyncIterator[StreamEvent]:
+            self.stream_calls += 1
+            yield TextDelta("partial")
+            raise asyncio.CancelledError
+
+    openai = _CancelMidStreamProvider("openai")
+    gemini = FakeStreamProvider("gemini", deltas=["should not run"])
+    router = LLMRouter(
+        settings=_settings(), providers={"openai": openai, "gemini": gemini}
+    )
+
+    seen: list[str] = []
+    with pytest.raises(asyncio.CancelledError):
+        async for event in router.stream_chat(tier="smart", messages=MESSAGES):
+            if isinstance(event, TextDelta):
+                seen.append(event.text)
+
+    assert seen == ["partial"]
+    assert openai.stream_calls == 1
+    assert gemini.stream_calls == 0  # cancellation never triggers fallback
+
+
 async def test_all_providers_fail_before_delta_raises_router_error() -> None:
     router = LLMRouter(
         settings=_settings(),

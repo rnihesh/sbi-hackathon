@@ -24,7 +24,7 @@ from app.models.crm import Lead
 from app.models.customer import Customer
 from app.models.enums import LeadStage, MemoryKind
 from app.services import kyc, ledger
-from app.services.products import CustomerProfile, match_products
+from app.services.products import CustomerProfile, rank_products
 
 _PHONE_RE = re.compile(r"^(?:\+91[\-\s]?|0)?[6-9]\d{9}$")
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
@@ -194,7 +194,9 @@ async def _match_products(ctx: AgentContext, state: AgentState, args: ToolArgs) 
         held_product_codes=[],
         risk_appetite=args.get("risk_appetite"),
     )
-    candidates = match_products(profile, limit=int(args.get("limit", 4) or 4))
+    candidates = await rank_products(
+        profile, router=ctx.router, limit=int(args.get("limit", 4) or 4)
+    )
     offers = [c.as_dict() for c in candidates]
     # Surface offers as structured payload so the frontend renders real offer
     # cards instead of relying on the model summarizing them into prose.

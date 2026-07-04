@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 60.0
     llm_default_max_tokens: int = 1024
 
+    # Purpose-based provider routing. Comma-separated "<key>=<provider>[:<model>]"
+    # entries; a key matches when it equals any ':'-separated segment of a call's
+    # ``purpose`` (so "classify" matches "supervisor:classify"). The matched provider
+    # is tried FIRST when its API key is configured, then the normal tier fallback
+    # chain. This keeps Gemini genuinely in rotation (intent classification) while
+    # OpenAI stays the default, so cost traces show both providers in a real session.
+    # "embedding" documents the embeddings backend (see app/llm/embeddings.py).
+    llm_purpose_routing: str = "classify=gemini:gemini-2.5-flash-lite,embedding=openai"
+
     # --- database / cache ---
     database_url: str = "postgresql+asyncpg://sarathi:sarathi@localhost:5432/sarathi"
     redis_url: str = "redis://localhost:6379/0"
@@ -111,6 +120,24 @@ class Settings(BaseSettings):
     @property
     def has_any_llm_key(self) -> bool:
         return any((self.openai_api_key, self.gemini_api_key, self.anthropic_api_key))
+
+    @property
+    def llm_purpose_routing_map(self) -> dict[str, tuple[str, str | None]]:
+        """Parse ``llm_purpose_routing`` into ``{key: (provider, model|None)}``."""
+        out: dict[str, tuple[str, str | None]] = {}
+        for raw_entry in self.llm_purpose_routing.split(","):
+            entry = raw_entry.strip()
+            if not entry or "=" not in entry:
+                continue
+            key, target = (part.strip() for part in entry.split("=", 1))
+            if not key or not target:
+                continue
+            if ":" in target:
+                provider, model = (part.strip() for part in target.split(":", 1))
+                out[key] = (provider, model or None)
+            else:
+                out[key] = (target, None)
+        return out
 
     @model_validator(mode="after")
     def _require_real_jwt_secret_outside_dev(self) -> Settings:
