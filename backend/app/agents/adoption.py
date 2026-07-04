@@ -12,7 +12,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-from app.agents.actions import create_nudge, create_proposal
+from app.agents.actions import create_nudge, create_proposal, normalize_action_kind
 from app.agents.context import AgentContext
 from app.agents.state import AgentState, append_proposal, append_structured, set_structured
 from app.agents.supervisor import run_specialist
@@ -146,7 +146,10 @@ async def _propose_action(ctx: AgentContext, state: AgentState, args: ToolArgs) 
     kind = str(args.get("kind", "action"))
     raw_action = args.get("action")
     action: dict[str, Any] = dict(raw_action) if isinstance(raw_action, dict) else {}
-    action.setdefault("kind", str(args.get("action_kind", "send_nudge")))
+    inner = action.get("kind") or args.get("action_kind")
+    action["kind"] = normalize_action_kind(
+        str(inner) if inner is not None else None, kind
+    )
     proposal = await create_proposal(
         ctx.session,
         customer_id=ctx.customer_id,

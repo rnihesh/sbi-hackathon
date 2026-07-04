@@ -80,3 +80,20 @@ async def test_execute_proposal_twice_is_rejected(  # type: ignore[no-untyped-de
     await ep.execute_proposal(str(proposal.id), approver="rm@bank.example")
     with pytest.raises(ValueError, match="already"):
         await ep.execute_proposal(str(proposal.id), approver="rm@bank.example")
+
+
+def test_normalize_action_kind_passthrough() -> None:
+    from app.agents.actions import normalize_action_kind
+
+    assert normalize_action_kind("send_email", "email") == "send_email"
+    assert normalize_action_kind("product_offer", "offer") == "product_offer"
+
+
+def test_normalize_action_kind_coerces_unexecutable() -> None:
+    from app.agents.actions import normalize_action_kind
+
+    # The live-run bug: inner kind "action" had no executor and stranded
+    # the proposal as unapprovable.
+    assert normalize_action_kind("action", "email") == "send_email"
+    assert normalize_action_kind(None, "product_offer") == "product_offer"
+    assert normalize_action_kind("garbage", "unknown-kind") == "send_nudge"

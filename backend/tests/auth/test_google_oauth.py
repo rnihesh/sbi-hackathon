@@ -92,9 +92,18 @@ async def test_google_login_redirects_and_sets_state_cookie(
     assert "sarathi_oauth_state" in resp.cookies
 
 
-async def test_google_login_503_when_not_configured(client: httpx.AsyncClient) -> None:
-    resp = await client.get("/api/v1/auth/google", follow_redirects=False)
-    assert resp.status_code == 503
+async def test_google_login_503_when_not_configured(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Empty env vars override any real credentials in the repo-root .env file.
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "")
+    get_settings.cache_clear()
+    try:
+        resp = await client.get("/api/v1/auth/google", follow_redirects=False)
+        assert resp.status_code == 503
+    finally:
+        get_settings.cache_clear()
 
 
 async def test_google_callback_full_flow_creates_user_and_session(

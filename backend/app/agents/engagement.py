@@ -18,7 +18,7 @@ from typing import Any
 import orjson
 from langchain_core.runnables import RunnableConfig
 
-from app.agents.actions import create_proposal
+from app.agents.actions import create_proposal, normalize_action_kind
 from app.agents.context import AgentContext
 from app.agents.state import AgentState, append_proposal, append_structured
 from app.agents.supervisor import run_specialist
@@ -299,7 +299,9 @@ async def _propose_outreach(ctx: AgentContext, state: AgentState, args: ToolArgs
     if ctx.customer_id is None:
         return {"error": "no customer in context"}
     action = {
-        "kind": str(args.get("action_kind", "product_offer")),
+        "kind": normalize_action_kind(
+            str(args.get("action_kind", "product_offer")), "product_offer"
+        ),
         "product_code": args.get("product_code"),
         "life_event": args.get("life_event"),
     }

@@ -40,6 +40,25 @@ async def create_nudge(
     return nudge
 
 
+# Inner action["kind"] values that execute_proposal can dispatch. Anything else
+# would strand the proposal as unapprovable, so tool layers normalize first.
+EXECUTABLE_ACTION_KINDS = {"send_nudge", "nudge", "product_offer", "offer", "send_email", "email"}
+
+_FALLBACK_ACTION_KINDS = {
+    "email": "send_email",
+    "product_offer": "product_offer",
+    "offer": "product_offer",
+    "nudge": "send_nudge",
+}
+
+
+def normalize_action_kind(inner: str | None, proposal_kind: str) -> str:
+    """Coerce an LLM-supplied action kind to one the executor supports."""
+    if inner in EXECUTABLE_ACTION_KINDS:
+        return inner
+    return _FALLBACK_ACTION_KINDS.get(proposal_kind, "send_nudge")
+
+
 async def create_proposal(
     session: AsyncSession,
     *,

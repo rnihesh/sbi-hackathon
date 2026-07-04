@@ -31,9 +31,30 @@ PRICING: dict[str, tuple[Decimal, Decimal]] = {
 }
 
 
+def _lookup(model: str) -> tuple[Decimal, Decimal] | None:
+    """Resolve pricing for a model id, tolerating provider-decorated ids.
+
+    Providers echo back dated or prefixed variants of the requested id
+    (e.g. OpenAI returns ``gpt-4o-2024-08-06`` for ``gpt-4o``, Gemini may
+    prefix ``models/``). Match exact first, then the longest known id that
+    prefixes the reported one.
+    """
+    exact = PRICING.get(model)
+    if exact is not None:
+        return exact
+    normalized = model.removeprefix("models/")
+    exact = PRICING.get(normalized)
+    if exact is not None:
+        return exact
+    candidates = [known for known in PRICING if normalized.startswith(known)]
+    if not candidates:
+        return None
+    return PRICING[max(candidates, key=len)]
+
+
 def compute_cost(model: str, tokens_in: int, tokens_out: int) -> Decimal:
     """Return the USD cost of a call. Unknown models cost ``Decimal('0')``."""
-    prices = PRICING.get(model)
+    prices = _lookup(model)
     if prices is None:
         return Decimal("0")
     price_in, price_out = prices

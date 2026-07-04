@@ -32,3 +32,20 @@ def test_every_default_model_priced() -> None:
     for model in ("gpt-4.1", "gpt-4.1-mini", "gemini-2.5-pro", "gemini-2.5-flash",
                   "claude-haiku-4-5", "claude-sonnet-4-6"):
         assert model in PRICING, model
+
+
+def test_compute_cost_dated_openai_variant() -> None:
+    # OpenAI echoes dated ids back; must price as the base model, and the
+    # longest prefix must win (gpt-4o-mini-* is mini, not gpt-4o).
+    base = compute_cost("gpt-4o-mini", 10_000, 5_000)
+    assert compute_cost("gpt-4o-mini-2024-07-18", 10_000, 5_000) == base
+    assert compute_cost("gpt-4o-2024-08-06", 10_000, 5_000) == compute_cost("gpt-4o", 10_000, 5_000)
+    assert compute_cost("gpt-4o-mini-2024-07-18", 10_000, 5_000) != compute_cost(
+        "gpt-4o", 10_000, 5_000
+    )
+
+
+def test_compute_cost_gemini_models_prefix() -> None:
+    assert compute_cost("models/gemini-2.5-flash", 10_000, 5_000) == compute_cost(
+        "gemini-2.5-flash", 10_000, 5_000
+    )
