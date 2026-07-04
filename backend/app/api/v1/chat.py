@@ -32,7 +32,9 @@ from app.schemas.chat import (
     ChatMessageRequest,
     ChatSessionCreateRequest,
     ChatSessionCreateResponse,
+    ChatSessionListResponse,
     ChatSessionOut,
+    ChatSessionSummary,
     MessageOut,
 )
 from app.workers.activity import publish_run_result
@@ -203,6 +205,67 @@ async def post_chat_message(
                 await agen.aclose()
 
     return EventSourceResponse(event_source(), ping=15)
+
+
+@router.get("/sessions", response_model=ChatSessionListResponse)
+async def list_chat_sessions(
+    user: Annotated[User | None, Depends(get_optional_user)] = None,
+    db: AsyncSession = Depends(get_db),
+) -> ChatSessionListResponse:
+    """List the authed customer's conversations, newest first.
+
+    Anonymous callers get an empty list (their thread lives only client-side).
+    Title falls back to the first user message, truncated.
+    """
+    customer = await _customer_for_user(db, user)
+    if customer is None:
+        return ChatSessionListResponse(sessions=[])
+
+    result = await db.execute(
+        select(Conversation)
+        .where(Conversation.customer_id == customer.id)
+        .order_by(Conversation.created_at.desc())
+        .limit(50)
+    )
+    conversations = result.scalars().all()
+    if not conversations:
+        return ChatSessionListResponse(sessions=[])
+
+    conv_ids = [c.id for c in conversations]
+    msg_rows = (
+        await db.execute(
+            select(Message.conversation_id, Message.role, Message.content, Message.created_at)
+            .where(Message.conversation_id.in_(conv_ids))
+            .order_by(Message.conversation_id, Message.created_at)
+        )
+    ).all()
+
+    first_user_msg: dict[uuid.UUID, str] = {}
+    counts: dict[uuid.UUID, int] = {}
+    last_at: dict[uuid.UUID, Any] = {}
+    for conv_id, role, content, created_at in msg_rows:
+        counts[conv_id] = counts.get(conv_id, 0) + 1
+        last_at[conv_id] = created_at
+        if role == "user" and conv_id not in first_user_msg:
+            first_user_msg[conv_id] = content
+
+    sessions = []
+    for conv in conversations:
+        count = counts.get(conv.id, 0)
+        if count == 0:
+            continue  # empty threads (created but never used) add noise
+        raw_title = conv.title or first_user_msg.get(conv.id, "New conversation")
+        title = raw_title[:60] + ("…" if len(raw_title) > 60 else "")
+        sessions.append(
+            ChatSessionSummary(
+                conversation_id=str(conv.id),
+                title=title,
+                message_count=count,
+                updated_at=last_at.get(conv.id, conv.created_at),
+            )
+        )
+    sessions.sort(key=lambda s: s.updated_at, reverse=True)
+    return ChatSessionListResponse(sessions=sessions)
 
 
 @router.get("/sessions/{conversation_id}", response_model=ChatSessionOut)

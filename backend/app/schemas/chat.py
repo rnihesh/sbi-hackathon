@@ -37,6 +37,17 @@ class ChatSessionOut(BaseModel):
     messages: list[MessageOut]
 
 
+class ChatSessionSummary(BaseModel):
+    conversation_id: str
+    title: str
+    message_count: int
+    updated_at: datetime
+
+
+class ChatSessionListResponse(BaseModel):
+    sessions: list[ChatSessionSummary]
+
+
 class ChatDoneEvent(BaseModel):
     """Shape of the terminal SSE ``done`` event's ``data`` payload (documentation only;
     the wire format is produced directly by ``app.agents.entrypoints.run_chat_turn``)."""
