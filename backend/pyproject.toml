@@ -1,0 +1,121 @@
+[project]
+name = "sarathi-backend"
+version = "0.1.0"
+description = "Sarathi — agentic banking relationship manager (backend)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "Nihesh Rachakonda", email = "niheshr03@gmail.com" }]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "redis>=5.2",
+    "pgvector>=0.3.6",
+    "langgraph>=0.2.50",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "openai>=1.55",
+    "google-genai>=0.3",
+    "anthropic>=0.40",
+    "httpx>=0.27",
+    "aioboto3>=13.2",
+    "authlib>=1.3",
+    "webauthn>=2.3",
+    "pyjwt>=2.10",
+    "itsdangerous>=2.2",
+    "faker>=30.0",
+    "orjson>=3.10",
+    "structlog>=24.4",
+    "sse-starlette>=2.1",
+    "python-multipart>=0.0.12",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "anyio>=4.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.uv]
+package = true
+
+# ----------------------------------------------------------------------------
+# Ruff
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+    "RUF", # ruff-specific
+]
+ignore = [
+    "B008", # function call in argument defaults (FastAPI Depends pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["N802", "N803", "N806"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ----------------------------------------------------------------------------
+# mypy — strict, with pragmatic overrides for untyped third-party libs
+# ----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+show_error_codes = true
+exclude = ["alembic/"]
+
+[[tool.mypy.overrides]]
+module = [
+    "google.genai.*",
+    "pgvector.*",
+    "authlib.*",
+    "webauthn.*",
+    "aioboto3.*",
+    "langgraph.*",
+    "langgraph_checkpoint.*",
+    "sse_starlette.*",
+]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------------------------
+# pytest
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["ignore::DeprecationWarning"]
