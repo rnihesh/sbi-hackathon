@@ -42,6 +42,7 @@ class CustomerOut(BaseModel):
 class MeResponse(BaseModel):
     user: UserOut
     customer: CustomerOut | None = None
+    is_staff: bool = False
 
 
 # --- OTP ---------------------------------------------------------------------------

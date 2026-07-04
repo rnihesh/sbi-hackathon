@@ -1,18 +1,18 @@
-"""API v1 router assembly.
-
-Wave-specific routers (chat, customers, console, ...) will be included here in later
-waves; auth is wired up now.
-"""
+"""API v1 router assembly."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth
+from app.api.v1 import auth, chat, console, customers, nudges
 
 api_router = APIRouter(prefix="/v1")
 api_router.include_router(auth.router)
 api_router.include_router(auth.me_router)
+api_router.include_router(chat.router)
+api_router.include_router(customers.router)
+api_router.include_router(nudges.router)
+api_router.include_router(console.router)
 
 
 @api_router.get("/ping", tags=["meta"])

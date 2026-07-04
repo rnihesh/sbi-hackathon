@@ -26,6 +26,18 @@ GROUP_AGENTS = "sarathi-agents"
 _client: Redis | None = None
 
 
+BLOCKING_READ_SOCKET_TIMEOUT_SECONDS = 30
+"""Client-side socket read timeout.
+
+Must exceed the longest ``block=`` duration any caller passes to a blocking
+``XREAD``/``XREADGROUP`` (the event consumer and the console live feed both
+block for single-digit seconds waiting for new Stream entries); redis-py's own
+default socket timeout is a flat 5s, shorter than that, so an idle blocking read
+would otherwise raise a client-side ``TimeoutError`` before the server's own
+block duration ever elapses.
+"""
+
+
 def get_redis() -> Redis:
     """Return the process-wide async Redis client, creating it lazily.
 
@@ -38,6 +50,7 @@ def get_redis() -> Redis:
             settings.redis_url,
             decode_responses=True,
             health_check_interval=30,
+            socket_timeout=BLOCKING_READ_SOCKET_TIMEOUT_SECONDS,
         )
     return _client
 

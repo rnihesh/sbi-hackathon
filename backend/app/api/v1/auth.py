@@ -1,6 +1,6 @@
 """Auth API: Google OAuth, WebAuthn passkeys, email OTP, and session lifecycle.
 
-All routes here are the exact Wave 3 frontend contract — see the docstrings on each
+All routes here are the exact Wave 3 frontend contract - see the docstrings on each
 handler for request/response shapes. Every route that establishes or refreshes a
 session sets the ``sarathi_access``/``sarathi_refresh`` httpOnly cookies via
 ``app.core.security``; none of them return the tokens in the JSON body.
@@ -47,7 +47,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from app.core.config import get_settings
+from app.core.config import get_settings, is_staff_email
 from app.core.db import get_db
 from app.core.logging import get_logger
 from app.core.redis import get_redis
@@ -178,6 +178,7 @@ def _me_response(user: User, customer: Customer | None) -> MeResponse:
     return MeResponse(
         user=UserOut.model_validate(user),
         customer=CustomerOut.model_validate(customer) if customer is not None else None,
+        is_staff=is_staff_email(user.email),
     )
 
 
@@ -622,7 +623,7 @@ _OTP_INVALID_MESSAGE = "Invalid or expired code"
 async def otp_send(
     payload: OtpSendRequest, db: AsyncSession = Depends(get_db)
 ) -> MessageResponse:
-    """Body: ``{"email": str}``. Always returns ``200`` with the same generic message —
+    """Body: ``{"email": str}``. Always returns ``200`` with the same generic message -
     this endpoint never reveals whether the email is registered or rate-limited."""
     settings = get_settings()
     email = payload.email.lower()

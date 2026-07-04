@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import (
 import app.core.db as db_module
 import app.core.redis as redis_module
 from app.core.db import Base
+from app.core.redis import BLOCKING_READ_SOCKET_TIMEOUT_SECONDS
 
 TEST_DB_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://sarathi:sarathi@localhost:5432/sarathi_test"
@@ -33,8 +34,27 @@ TEST_REDIS_URL = "redis://localhost:6379/15"
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def _fresh_checkpointer() -> AsyncIterator[None]:
+    """Reset LangGraph's compiled graph + Postgres checkpointer singletons before
+    each test (see the identical fixture in ``tests/api/conftest.py`` for why)."""
+    import app.agents.checkpointer as checkpointer_module
+    import app.agents.graph as graph_module
+
+    graph_module._compiled = None
+    checkpointer_module._saver = None
+    checkpointer_module._pool = None
+    checkpointer_module._lock = asyncio.Lock()
+    yield
+    await checkpointer_module.close_checkpointer()
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def _redis_test_db() -> AsyncGenerator[Redis]:
-    client: Redis = Redis.from_url(TEST_REDIS_URL, decode_responses=True)
+    client: Redis = Redis.from_url(
+        TEST_REDIS_URL,
+        decode_responses=True,
+        socket_timeout=BLOCKING_READ_SOCKET_TIMEOUT_SECONDS,
+    )
     await client.flushdb()
     previous = redis_module._client
     redis_module._client = client

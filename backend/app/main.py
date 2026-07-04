@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from sqlalchemy import text
 
+from app.agents.checkpointer import close_checkpointer
+from app.agents.entrypoints import init_agents
 from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.db import dispose_engine, get_engine
@@ -32,10 +34,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Warm the engine and redis client (created lazily; construct now).
     get_engine()
     get_redis()
+    await init_agents()
 
     try:
         yield
     finally:
+        await close_checkpointer()
         await dispose_engine()
         await close_redis()
         logger.info("shutdown")

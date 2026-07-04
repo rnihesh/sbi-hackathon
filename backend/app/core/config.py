@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from functools import lru_cache
 from pathlib import Path
 
@@ -79,6 +80,30 @@ class Settings(BaseSettings):
     # --- CORS ---
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
+    # --- console / staff gate ---
+    # Plain string field (never JSON-decoded at the settings-source layer, so it
+    # can never crash on a bare `.env` value) accepting either a comma-separated
+    # list ("a@x.com,b@x.com") or a JSON array ("[\"a@x.com\"]") - see
+    # `staff_email_list`. Empty in dev = any authenticated user passes
+    # `get_current_staff` (with a warning).
+    staff_emails: str = ""
+
+    # --- event consumer ---
+    event_cooldown_seconds: int = 300
+    """Per-(customer, rule) cooldown before another agent run may be triggered."""
+
+    @property
+    def staff_email_list(self) -> list[str]:
+        raw = self.staff_emails.strip()
+        if raw.startswith("["):
+            import json
+
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(e).strip() for e in parsed if str(e).strip()]
+        return [e.strip() for e in raw.split(",") if e.strip()]
+
     @property
     def is_dev(self) -> bool:
         return self.app_env.lower() in {"dev", "development", "local"}
@@ -89,7 +114,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_real_jwt_secret_outside_dev(self) -> Settings:
-        """Refuse to boot with the placeholder JWT secret anywhere but dev — sessions are
+        """Refuse to boot with the placeholder JWT secret anywhere but dev - sessions are
         only as secure as this key."""
         if not self.is_dev and self.jwt_secret == "change-me":
             raise ValueError("JWT_SECRET must be set to a real secret when APP_ENV != dev")
@@ -100,3 +125,14 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return the process-wide cached :class:`Settings` instance."""
     return Settings()
+
+
+def is_staff_email(email: str) -> bool:
+    """Shared staff-gate predicate: ``app.api.v1.console.get_current_staff`` and
+    ``GET /me``'s ``is_staff`` flag both derive from this single rule so they can
+    never disagree. Empty allowlist + ``APP_ENV=dev`` -> everyone is staff."""
+    settings = get_settings()
+    allowlist = {e.lower() for e in settings.staff_email_list}
+    if not allowlist:
+        return settings.is_dev
+    return email.lower() in allowlist
