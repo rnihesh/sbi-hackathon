@@ -41,12 +41,26 @@ export function ConsoleMobileNav() {
                 href={item.href}
                 onClick={() => setOpen(false)}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-foreground/70 transition-colors hover:text-foreground",
-                  isActive && "bg-accent text-accent-foreground"
+                  "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-[transform,color,background-color] duration-150 active:scale-[0.97]",
+                  isActive
+                    ? "bg-accent text-accent-foreground"
+                    : "text-foreground/70 hover:bg-secondary/70 hover:text-foreground"
                 )}
                 aria-current={isActive ? "page" : undefined}
               >
-                <Icon className="size-4 shrink-0" />
+                <span
+                  className={cn(
+                    "absolute -left-2 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary transition-opacity duration-200",
+                    isActive ? "opacity-100" : "opacity-0"
+                  )}
+                  aria-hidden
+                />
+                <Icon
+                  className={cn(
+                    "size-4 shrink-0 transition-transform duration-200",
+                    !isActive && "group-hover:scale-110"
+                  )}
+                />
                 {item.label}
               </Link>
             )

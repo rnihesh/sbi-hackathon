@@ -24,7 +24,7 @@ export function BottomTabBar() {
             <li key={tab.href} className="flex-1">
               <Link
                 href={tab.href}
-                className="relative flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium text-muted-foreground"
+                className="relative flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium text-muted-foreground transition-transform duration-150 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-90 active:duration-100"
                 aria-current={isActive ? "page" : undefined}
               >
                 {isActive && (
@@ -36,11 +36,16 @@ export function BottomTabBar() {
                 )}
                 <span
                   className={cn(
-                    "relative z-10 flex flex-col items-center gap-0.5",
+                    "relative z-10 flex flex-col items-center gap-0.5 transition-colors duration-150",
                     isActive && "text-accent-foreground"
                   )}
                 >
-                  <Icon className="size-5" />
+                  <Icon
+                    className={cn(
+                      "size-5 transition-transform duration-200",
+                      isActive && "scale-110"
+                    )}
+                  />
                   {tab.label}
                 </span>
               </Link>
