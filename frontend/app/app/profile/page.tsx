@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { startRegistration } from "@simplewebauthn/browser"
 import type { PublicKeyCredentialCreationOptionsJSON } from "@simplewebauthn/browser"
 import {
+  Brain,
   Check,
   ChevronDown,
   ChevronRight,
@@ -426,6 +427,24 @@ export default function ProfilePage() {
               {i < visibleRows.length - 1 && <Separator />}
             </div>
           ))}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <h2 className="text-sm font-medium text-muted-foreground">Privacy</h2>
+          <Card>
+            <CardContent>
+              <Link
+                href="/app/memory"
+                className="flex items-center justify-between gap-3 text-sm font-medium"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Brain className="size-4 text-muted-foreground" />
+                  What Sarathi knows about me
+                </span>
+                <ChevronRight className="size-4 text-muted-foreground" />
+              </Link>
+            </CardContent>
+          </Card>
         </div>
 
         {me.is_staff && (
