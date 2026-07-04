@@ -1,0 +1,35 @@
+# internal docs stay untracked (project rule)
+docs/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# node
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# data
+pgdata/
+redisdata/
+*.log
