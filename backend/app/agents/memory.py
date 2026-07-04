@@ -186,6 +186,7 @@ async def profile_facts(session: AsyncSession, customer_id: uuid.UUID) -> dict[s
         "held_product_codes": held,
         "facts": facts,
         "preferences": preferences,
+        "preferred_language": customer.preferred_language,  # vernacular chat
     }
 
 

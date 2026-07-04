@@ -87,3 +87,92 @@ async def test_dashboard_404_without_customer_profile(
 
     resp = await client.get("/api/v1/me/dashboard", cookies=auth_cookies(user))
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PATCH /me/preferences (vernacular chat language)
+# ---------------------------------------------------------------------------
+
+
+async def test_preferences_requires_auth(client: httpx.AsyncClient) -> None:
+    resp = await client.patch("/api/v1/me/preferences", json={"preferred_language": "hindi"})
+    assert resp.status_code == 401
+
+
+async def test_preferences_sets_preferred_language(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, customer = await make_customer(full_name="Lang User")
+    assert customer.preferred_language is None
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"preferred_language": "hindi"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["preferred_language"] == "hindi"
+
+    me_resp = await client.get("/api/v1/me", cookies=auth_cookies(user))
+    assert me_resp.json()["customer"]["preferred_language"] == "hindi"
+
+
+async def test_preferences_accepts_every_supported_language(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    from app.agents.language import SUPPORTED_LANGUAGES
+
+    user, _customer = await make_customer(full_name="All Langs User")
+    for language in SUPPORTED_LANGUAGES:
+        resp = await client.patch(
+            "/api/v1/me/preferences",
+            json={"preferred_language": language},
+            cookies=auth_cookies(user),
+        )
+        assert resp.status_code == 200, language
+        assert resp.json()["preferred_language"] == language
+
+
+async def test_preferences_null_clears_to_auto(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Auto User", preferred_language="tamil")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"preferred_language": None},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["preferred_language"] is None
+
+
+async def test_preferences_rejects_unsupported_language(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(full_name="Bad Lang User")
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"preferred_language": "klingon"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 422
+
+
+async def test_preferences_404_without_customer_profile(
+    client: httpx.AsyncClient, db: AsyncSession
+) -> None:
+    from app.models.identity import User
+
+    user = User(email="no-customer-prefs@example.com")
+    db.add(user)
+    await db.flush()
+    await db.commit()
+
+    resp = await client.patch(
+        "/api/v1/me/preferences",
+        json={"preferred_language": "hindi"},
+        cookies=auth_cookies(user),
+    )
+    assert resp.status_code == 404

@@ -21,6 +21,7 @@ from app.schemas.customer import (
     AccountOut,
     DashboardResponse,
     HoldingOut,
+    PreferencesUpdateRequest,
     ProductOut,
     TransactionOut,
 )
@@ -74,3 +75,20 @@ async def get_dashboard(
         ],
         unseen_nudges=int(unseen_count or 0),
     )
+
+
+@router.patch("/preferences", response_model=CustomerOut, summary="Update chat preferences")
+async def update_preferences(
+    payload: PreferencesUpdateRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+) -> CustomerOut:
+    """Set (or clear, with ``null``) the customer's chat language preference.
+
+    Clearing it returns Sarathi to "auto": agents reply in whatever language
+    the customer writes in.
+    """
+    customer = await _customer_for_user_or_404(db, user)
+    customer.preferred_language = payload.preferred_language
+    await db.flush()
+    return CustomerOut.model_validate(customer)

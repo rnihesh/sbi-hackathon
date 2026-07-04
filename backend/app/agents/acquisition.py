@@ -17,6 +17,7 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents import memory
 from app.agents.context import AgentContext
+from app.agents.language import language_directive
 from app.agents.state import AgentState, set_structured
 from app.agents.supervisor import run_specialist
 from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
@@ -57,7 +58,9 @@ verified, do NOT promise an account - explain what is pending.
 record buying intent.
 
 Current onboarding state: collected={collected}, kyc_status={status}. Ask only for what is \
-still missing. Do not fabricate PAN/Aadhaar or account numbers."""
+still missing. Do not fabricate PAN/Aadhaar or account numbers.
+
+{language_directive(profile.get("preferred_language"))}"""
 
 
 # ---------------------------------------------------------------------------

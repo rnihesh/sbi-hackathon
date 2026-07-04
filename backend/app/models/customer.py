@@ -45,6 +45,10 @@ class Customer(UUIDPKMixin, TimestampMixin, Base):
     occupation: Mapped[str | None] = mapped_column(sa.String(120), nullable=True)
     annual_income_paise: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
     segment: Mapped[str | None] = mapped_column(sa.String(60), nullable=True)
+    # Free string (not a DB enum) so adding a supported language is a one-line
+    # change in app.agents.language - no migration. None means "auto": the
+    # agents follow whatever language the customer writes in.
+    preferred_language: Mapped[str | None] = mapped_column(sa.String(20), nullable=True)
 
     # --- persona / risk ---
     persona: Mapped[dict[str, Any]] = mapped_column(

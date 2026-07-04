@@ -41,6 +41,9 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 - **Guardrails by design** - PII redaction before every LLM call (PAN/Aadhaar/phone),
   a compliance rule engine (mandated disclosures, no unapproved product claims), and an
   immutable, hash-chained audit log of every agent action.
+- **Vernacular chat** - customers pick a chat language (Hindi, Hinglish, Telugu, Tamil,
+  Kannada, Bengali, Marathi, or auto-detect) and every agent replies in it, with mandated
+  disclosures always staying in English.
 - **Provider-agnostic** - a thin multi-provider LLM router (OpenAI / Gemini / Anthropic)
   with policy tiers (cheap model for classification, strong for dialogue), automatic
   fallback, and a per-request cost ledger. Self-hosted models are pluggable for data

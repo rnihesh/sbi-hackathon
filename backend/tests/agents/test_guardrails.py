@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 
-from app.agents.guardrails import AuditTrail, PIIRedactor, PolicyEngine
+from app.agents.guardrails import _MF_DISCLOSURE, AuditTrail, PIIRedactor, PolicyEngine
 from app.models.audit import AuditLog
 
 # ---------------------------------------------------------------------------
@@ -91,6 +91,41 @@ def test_suitability_gate_passes_with_full_profile() -> None:
     assert not any("suitability_gate" in v for v in verdict.violations)
     # disclosure still appended
     assert "market risks" in verdict.fixed_text.lower()
+
+
+def test_disclosure_appends_cleanly_after_a_non_english_reply() -> None:
+    """Vernacular compatibility: the disclosure engine is string-based and
+    English-only - it must still just APPEND, on its own blank line, never
+    mangle or mid-sentence-glue onto a non-English draft (Hindi here)."""
+    policy = PolicyEngine()
+    hindi_reply = (
+        "Aap is mutual fund SIP mein invest karke apna paisa badha sakte hain."
+    )
+    verdict = policy.check(hindi_reply, profile={"income": 900000, "risk": "high"})
+
+    assert verdict.fixed_text.startswith(hindi_reply)
+    # A real paragraph break, not a bare space glued onto the last word - the
+    # English disclosure must never mash into the vernacular sentence above it.
+    assert f"{hindi_reply}\n\n" in verdict.fixed_text
+    assert hindi_reply + " " + _MF_DISCLOSURE not in verdict.fixed_text
+    assert "market risks" in verdict.fixed_text
+    assert "mutual_fund" in verdict.disclosures_added
+
+
+def test_disclosure_appends_cleanly_after_a_devanagari_script_reply() -> None:
+    """Same joiner check, but with actual Devanagari script - the disclosure
+    engine only detects English-literal keywords ("mutual fund", "SIP", the
+    terms Hindi banking chat commonly keeps in Latin script anyway), so those
+    stay untranslated in the draft while the rest of the sentence is Hindi."""
+    policy = PolicyEngine()
+    devanagari_reply = (
+        "अगर आप हर महीने थोड़ा निवेश करना चाहते हैं तो एक SIP mutual fund "
+        "अच्छा विकल्प है."
+    )
+    verdict = policy.check(devanagari_reply, profile={"income": 900000, "risk": "high"})
+
+    assert verdict.fixed_text.startswith(f"{devanagari_reply}\n\n")
+    assert _MF_DISCLOSURE in verdict.fixed_text
 
 
 # ---------------------------------------------------------------------------

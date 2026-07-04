@@ -18,9 +18,11 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents import memory
 from app.agents.context import AgentContext
+from app.agents.language import language_directive
 from app.agents.state import AgentState, ChatTurn
 from app.agents.toolkit import Tool, run_agent_loop, stream_final_answer
 from app.llm.base import ChatMessage
+from app.models.customer import Customer
 from app.models.enums import AgentStepKind, MemoryKind
 
 VALID_INTENTS = ("acquisition", "adoption", "engagement", "smalltalk")
@@ -231,6 +233,15 @@ not invent account details or make product promises. If the user needs an accoun
 gently offer to help with it."""
 
 
+async def _preferred_language(ctx: AgentContext) -> str | None:
+    """Look up the customer's chat-language preference (``None`` for prospects
+    or when unset - the language directive then auto-detects)."""
+    if ctx.customer_id is None:
+        return None
+    customer = await ctx.session.get(Customer, ctx.customer_id)
+    return customer.preferred_language if customer is not None else None
+
+
 async def smalltalk_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     ctx = get_ctx(config)
     await ctx.emit({"type": "agent", "agent": "smalltalk", "node": "smalltalk"})
@@ -238,6 +249,8 @@ async def smalltalk_node(state: AgentState, config: RunnableConfig) -> dict[str,
         ChatMessage(role=t["role"], content=t["content"])  # type: ignore[arg-type]
         for t in state.get("messages") or []
     ]
+    preferred = await _preferred_language(ctx)
+    system = f"{_SMALLTALK_SYSTEM}\n\n{language_directive(preferred)}"
     # The small-talk direct answer is user-facing, so it streams token-by-token on
     # the chat path (blocking on the event path). ``stream_final_answer`` traces
     # the call with real usage/cost.
@@ -245,7 +258,7 @@ async def smalltalk_node(state: AgentState, config: RunnableConfig) -> dict[str,
         ctx,
         tier="fast",
         messages=history or [ChatMessage(role="user", content=state.get("user_text", "hello"))],
-        system=_SMALLTALK_SYSTEM,
+        system=system,
         purpose="smalltalk",
         node="smalltalk",
         name="smalltalk.answer",

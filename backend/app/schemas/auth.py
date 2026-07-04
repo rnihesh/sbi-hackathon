@@ -37,6 +37,7 @@ class CustomerOut(BaseModel):
     state: str | None
     segment: str | None
     digital_maturity: str
+    preferred_language: str | None
 
 
 class MeResponse(BaseModel):

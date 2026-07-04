@@ -4,6 +4,10 @@ import * as React from "react"
 import { ArrowUp, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { CHAT_PLACEHOLDER_HINTS } from "@/lib/languages"
+
+const DEFAULT_PLACEHOLDER = "Ask Sarathi anything about your money…"
+const PLACEHOLDER_ROTATE_MS = 3200
 
 export function ChatComposer({
   value,
@@ -11,14 +15,35 @@ export function ChatComposer({
   onSend,
   onStop,
   isStreaming,
+  preferredLanguage,
 }: {
   value: string
   onChange: (value: string) => void
   onSend: () => void
   onStop: () => void
   isStreaming: boolean
+  /** The customer's chat language preference (`null`/`undefined`/"english" -
+   * auto, no rotation). A recognised non-English value rotates the empty-state
+   * placeholder between English and a native-script hint. */
+  preferredLanguage?: string | null
 }) {
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+
+  const nativeHint = preferredLanguage ? CHAT_PLACEHOLDER_HINTS[preferredLanguage] : undefined
+  const placeholders = React.useMemo(
+    () => (nativeHint ? [DEFAULT_PLACEHOLDER, `${nativeHint}…`] : [DEFAULT_PLACEHOLDER]),
+    [nativeHint]
+  )
+  const [placeholderIndex, setPlaceholderIndex] = React.useState(0)
+
+  React.useEffect(() => {
+    setPlaceholderIndex(0)
+    if (placeholders.length < 2) return
+    const id = setInterval(() => {
+      setPlaceholderIndex((i) => (i + 1) % placeholders.length)
+    }, PLACEHOLDER_ROTATE_MS)
+    return () => clearInterval(id)
+  }, [placeholders])
 
   React.useEffect(() => {
     const el = textareaRef.current
@@ -61,7 +86,7 @@ export function ChatComposer({
           onKeyDown={handleKeyDown}
           disabled={isStreaming}
           rows={1}
-          placeholder="Ask Sarathi anything about your money…"
+          placeholder={placeholders[placeholderIndex]}
           className="max-h-[200px] min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-60"
         />
         {isStreaming ? (

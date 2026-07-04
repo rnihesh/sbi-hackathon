@@ -6,8 +6,9 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.agents.language import SUPPORTED_LANGUAGES
 from app.schemas.auth import CustomerOut
 
 
@@ -105,3 +106,27 @@ class NotificationReadRequest(BaseModel):
 class NotificationReadResponse(BaseModel):
     marked: int
     unread: int
+
+
+class PreferencesUpdateRequest(BaseModel):
+    """Body for ``PATCH /me/preferences``.
+
+    ``preferred_language`` is ``None`` for "auto" (the agents follow whatever
+    language the customer writes in) or one of :data:`SUPPORTED_LANGUAGES`.
+    Anything else is rejected with a 422.
+    """
+
+    preferred_language: str | None = Field(default=None)
+
+    @field_validator("preferred_language")
+    @classmethod
+    def _validate_language(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_LANGUAGES:
+            raise ValueError(
+                f"unsupported language '{value}' - expected one of "
+                f"{', '.join(SUPPORTED_LANGUAGES)}"
+            )
+        return normalized

@@ -14,6 +14,7 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents.actions import create_nudge, create_proposal, normalize_action_kind
 from app.agents.context import AgentContext
+from app.agents.language import language_directive
 from app.agents.state import AgentState, append_proposal, append_structured, set_structured
 from app.agents.supervisor import run_specialist
 from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
@@ -84,7 +85,9 @@ netbanking) - the app renders the steps.
 - Use draft_nudge for a gentle in-app suggestion.
 - Use propose_action for impactful outreach (e.g. an email offer) - it goes to a human \
 approval queue, it does NOT send automatically.
-Keep replies concrete and encouraging. Customer holds: {held}. Recent context: {mem}."""
+Keep replies concrete and encouraging. Customer holds: {held}. Recent context: {mem}.
+
+{language_directive(profile.get("preferred_language"))}"""
 
 
 async def _get_usage_snapshot(ctx: AgentContext, state: AgentState, args: ToolArgs) -> ToolResult:

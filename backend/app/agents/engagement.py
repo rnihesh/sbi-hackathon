@@ -20,6 +20,7 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents.actions import create_proposal, normalize_action_kind
 from app.agents.context import AgentContext
+from app.agents.language import language_directive
 from app.agents.state import AgentState, append_proposal, append_structured
 from app.agents.supervisor import run_specialist
 from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
@@ -84,7 +85,9 @@ warm congratulation and ONE well-matched product (goes to human approval, not se
 4. If churn/leaving signals appear, call score_churn.
 
 Be genuinely helpful and concise. Respect suitability - don't push investments without \
-income and risk on file."""
+income and risk on file.
+
+{language_directive(profile.get("preferred_language"))}"""
 
 
 # ---------------------------------------------------------------------------

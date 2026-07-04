@@ -7,9 +7,12 @@ import { AnimatePresence, motion } from "framer-motion"
 import { startRegistration } from "@simplewebauthn/browser"
 import type { PublicKeyCredentialCreationOptionsJSON } from "@simplewebauthn/browser"
 import {
+  Check,
+  ChevronDown,
   ChevronRight,
   Fingerprint,
   KeyRound,
+  Languages,
   LogOut,
   Moon,
   ShieldCheck,
@@ -20,10 +23,11 @@ import {
 import { toast } from "sonner"
 
 import { api, API_V1, describeApiError } from "@/lib/api"
-import { useMe } from "@/lib/auth"
+import { useMe, type CustomerOut } from "@/lib/auth"
 import { useTheme } from "next-themes"
 import { springSoft } from "@/lib/motion"
 import { formatRelativeTime, humanizeIdentifier } from "@/lib/format"
+import { LANGUAGE_OPTIONS, languageLabel } from "@/lib/languages"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -35,6 +39,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 
 interface PasskeyRegisterCompleteResponse {
@@ -70,13 +80,14 @@ function initialsFor(name: string): string {
 
 export default function ProfilePage() {
   const router = useRouter()
-  const { me, logout } = useMe()
+  const { me, setMe, logout } = useMe()
   const { resolvedTheme, setTheme } = useTheme()
   const [mounted, setMounted] = React.useState(false)
   const [addingPasskey, setAddingPasskey] = React.useState(false)
   const [passkeys, setPasskeys] = React.useState<PasskeyCredential[] | null>(null)
   const [pendingRemoval, setPendingRemoval] = React.useState<PasskeyCredential | null>(null)
   const [removingPasskey, setRemovingPasskey] = React.useState(false)
+  const [languagePending, setLanguagePending] = React.useState(false)
 
   React.useEffect(() => setMounted(true), [])
 
@@ -147,6 +158,26 @@ export default function ProfilePage() {
       toast.error(describeApiError(err, "Couldn't remove that passkey"))
     } finally {
       setRemovingPasskey(false)
+    }
+  }
+
+  async function handleLanguageChange(value: string | null) {
+    if (!me?.customer || languagePending || value === me.customer.preferred_language) return
+    const previousMe = me
+    setLanguagePending(true)
+    // Optimistic: flip the local preference immediately, roll back on failure.
+    setMe({ ...me, customer: { ...me.customer, preferred_language: value } })
+    try {
+      const updated = await api.patch<CustomerOut>(`${API_V1}/me/preferences`, {
+        preferred_language: value,
+      })
+      setMe({ ...previousMe, customer: updated })
+      toast.success("Chat language updated", { description: languageLabel(value) })
+    } catch (err) {
+      setMe(previousMe)
+      toast.error(describeApiError(err, "Couldn't update chat language"))
+    } finally {
+      setLanguagePending(false)
     }
   }
 
@@ -276,27 +307,69 @@ export default function ProfilePage() {
         <div className="flex flex-col gap-3">
           <h2 className="text-sm font-medium text-muted-foreground">Preferences</h2>
           <Card>
-            <CardContent className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 text-sm font-medium">
-                {isDark ? <Moon className="size-4" /> : <Sun className="size-4" />}
-                Appearance
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 text-sm font-medium">
+                  {isDark ? <Moon className="size-4" /> : <Sun className="size-4" />}
+                  Appearance
+                </div>
+                <div className="flex gap-1 rounded-lg bg-muted p-1">
+                  <Button
+                    variant={!isDark ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setTheme("light")}
+                  >
+                    Light
+                  </Button>
+                  <Button
+                    variant={isDark ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setTheme("dark")}
+                  >
+                    Dark
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-1 rounded-lg bg-muted p-1">
-                <Button
-                  variant={!isDark ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setTheme("light")}
-                >
-                  Light
-                </Button>
-                <Button
-                  variant={isDark ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setTheme("dark")}
-                >
-                  Dark
-                </Button>
-              </div>
+
+              {me.customer && (
+                <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
+                  <div>
+                    <div className="flex items-center gap-2.5 text-sm font-medium">
+                      <Languages className="size-4" />
+                      Chat language
+                    </div>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      Sarathi replies in this language across chat.
+                    </p>
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 gap-1.5"
+                        disabled={languagePending}
+                      >
+                        {languageLabel(me.customer.preferred_language)}
+                        <ChevronDown className="size-3.5 text-muted-foreground" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      {LANGUAGE_OPTIONS.map((option) => (
+                        <DropdownMenuItem
+                          key={option.label}
+                          onSelect={() => void handleLanguageChange(option.value)}
+                        >
+                          <span className="flex-1">{option.label}</span>
+                          {me.customer?.preferred_language === option.value && (
+                            <Check className="size-3.5" />
+                          )}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
