@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { AnimatePresence, motion } from "framer-motion"
 import { startAuthentication } from "@simplewebauthn/browser"
@@ -263,6 +264,28 @@ export function SignInSheet({
               </motion.div>
             )}
           </AnimatePresence>
+
+          <p className="text-center text-xs text-muted-foreground">
+            By continuing you agree to the{" "}
+            <Link
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-foreground underline underline-offset-2"
+            >
+              Terms
+            </Link>{" "}
+            and{" "}
+            <Link
+              href="/policy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-foreground underline underline-offset-2"
+            >
+              Privacy Policy
+            </Link>
+            .
+          </p>
         </div>
       </SheetContent>
     </Sheet>
