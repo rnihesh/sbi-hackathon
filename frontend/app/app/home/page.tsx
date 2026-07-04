@@ -170,7 +170,15 @@ export default function HomePage() {
           </motion.div>
 
           <motion.div variants={staggerItem} className="flex flex-col gap-3">
-            <h2 className="text-sm font-medium text-muted-foreground">Holdings</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-medium text-muted-foreground">Holdings</h2>
+              <Link
+                href="/app/products"
+                className="text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+              >
+                Browse products
+              </Link>
+            </div>
             {dashboard.holdings.length === 0 ? (
               <EmptyPanel label="No products yet - Sarathi will suggest some as you chat." />
             ) : (

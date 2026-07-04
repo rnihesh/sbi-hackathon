@@ -265,6 +265,74 @@ def _is_eligible(spec: dict[str, Any], profile: CustomerProfile) -> bool:
     return not (seg is not None and profile.segment != seg)
 
 
+def is_eligible(code: str, profile: CustomerProfile) -> bool:
+    """Public single-product eligibility check (browse/apply API surface)."""
+    spec = _CATALOG_BY_CODE.get(code)
+    return spec is not None and _is_eligible(spec, profile)
+
+
+def _ineligibility_reason(spec: dict[str, Any], profile: CustomerProfile) -> str | None:
+    """Human-readable reason a product fails :func:`_is_eligible`, if a specific
+    rule caused it. Mirrors that function's checks in the same order/None-safety,
+    so it only fires when ``_is_eligible`` would actually return ``False``.
+    Returns ``None`` when the customer is eligible (nothing to explain).
+    """
+    elig = spec.get("eligibility", {})
+    income, age = profile.annual_income_paise, profile.age
+
+    min_inc = elig.get("min_income_paise")
+    if min_inc is not None and (income is None or income < min_inc):
+        return f"Requires annual income of at least Rs {min_inc // _RUPEE:,}"
+    max_inc = elig.get("max_income_paise")
+    if max_inc is not None and income is not None and income > max_inc:
+        return f"Only available up to Rs {max_inc // _RUPEE:,} annual income"
+    min_age = elig.get("min_age")
+    if min_age is not None and age is not None and age < min_age:
+        return f"Available from age {min_age}"
+    max_age = elig.get("max_age")
+    if max_age is not None and age is not None and age > max_age:
+        return f"Available up to age {max_age}"
+    seg = elig.get("segment")
+    if seg is not None and profile.segment != seg:
+        return f"Only for {seg} customers"
+    return None
+
+
+@dataclass(slots=True)
+class CatalogEntry:
+    """A catalog product merged with this customer's eligibility verdict."""
+
+    code: str
+    name: str
+    category: str
+    description: str | None
+    eligible: bool
+    ineligibility_reason: str | None
+
+
+def catalog_with_eligibility(profile: CustomerProfile) -> list[CatalogEntry]:
+    """The full catalog (every product, held or not) with a per-customer
+    eligibility verdict and, for ineligible products, a rule-grounded reason.
+
+    Used by the browse API, which shows every product (not just eligible ones)
+    so the customer can see what they don't yet qualify for and why.
+    """
+    out: list[CatalogEntry] = []
+    for spec in CATALOG:
+        eligible = _is_eligible(spec, profile)
+        out.append(
+            CatalogEntry(
+                code=spec["code"],
+                name=spec["name"],
+                category=spec["category"],
+                description=spec.get("description"),
+                eligible=eligible,
+                ineligibility_reason=None if eligible else _ineligibility_reason(spec, profile),
+            )
+        )
+    return out
+
+
 def _score_and_reasons(
     spec: dict[str, Any], profile: CustomerProfile
 ) -> tuple[float, list[str]]:
@@ -449,16 +517,16 @@ def _parse_ranked(
     return out[:limit]
 
 
-async def rank_products(
-    profile: CustomerProfile, *, router: LLMRouter, limit: int = 5
-) -> list[ProductCandidate]:
-    """Eligibility-filter then LLM-rank not-yet-held products for a customer.
-
-    The hard eligibility filter is code (compliance); the ranking + per-product
-    reasons are an LLM call validated against the eligible codes. Any failure
-    (LLM error, empty/garbled output, all-hallucinated codes) falls back to the
-    deterministic :func:`match_products` ranking, so this never returns nothing
-    when eligible products exist.
+async def _llm_rank(
+    profile: CustomerProfile, *, router: LLMRouter, limit: int
+) -> list[ProductCandidate] | None:
+    """LLM-rank not-yet-held eligible products. ``None`` on any failure or
+    unusable output (as opposed to :func:`rank_products`'s public contract of
+    always returning *something* via the deterministic fallback) - callers
+    that need to distinguish "the LLM genuinely ranked these" from "nothing
+    to show" (e.g. the products browse page, which displays no personalized
+    reason rather than a synthetic rule-based one when the LLM is
+    unavailable) call this directly.
     """
     eligible = _eligible_specs(profile)
     if not eligible:
@@ -484,15 +552,38 @@ async def rank_products(
             temperature=0.0,
             purpose="match_products",
         )
-        ranked = _parse_ranked(resp.text, eligible, limit)
+        return _parse_ranked(resp.text, eligible, limit)
     except Exception as exc:
         logger.warning("product_rank_llm_failed", error=str(exc))
-        ranked = None
+        return None
+
+
+async def rank_products(
+    profile: CustomerProfile, *, router: LLMRouter, limit: int = 5
+) -> list[ProductCandidate]:
+    """Eligibility-filter then LLM-rank not-yet-held products for a customer.
+
+    The hard eligibility filter is code (compliance); the ranking + per-product
+    reasons are an LLM call validated against the eligible codes. Any failure
+    (LLM error, empty/garbled output, all-hallucinated codes) falls back to the
+    deterministic :func:`match_products` ranking, so this never returns nothing
+    when eligible products exist.
+    """
+    ranked = await _llm_rank(profile, router=router, limit=limit)
     if ranked is None:
         # Fallback: deterministic rule ranking (same eligibility set) so the
-        # demo path never breaks. Logged above when the failure was an exception.
+        # demo path never breaks. Logged inside _llm_rank when the failure was
+        # an exception.
         return match_products(profile, limit=limit)
     return ranked
+
+
+async def rank_products_llm_only(
+    profile: CustomerProfile, *, router: LLMRouter, limit: int = 20
+) -> list[ProductCandidate] | None:
+    """LLM-only ranking: ``None`` (not a rule-based fallback) when the model
+    can't produce one. See :func:`_llm_rank`."""
+    return await _llm_rank(profile, router=router, limit=limit)
 
 
 # ---------------------------------------------------------------------------

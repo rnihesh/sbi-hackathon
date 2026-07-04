@@ -160,13 +160,13 @@ def make_customer(db: AsyncSession) -> Callable[..., Awaitable[tuple[User, Custo
     """Factory: create a (User, Customer) pair."""
 
     async def _make(
-        *, email: str | None = None, full_name: str = "Test Customer"
+        *, email: str | None = None, full_name: str = "Test Customer", **fields: Any
     ) -> tuple[User, Customer]:
         email = email or f"{uuid.uuid4().hex[:10]}@example.com"
         user = User(email=email)
         db.add(user)
         await db.flush()
-        customer = Customer(user_id=user.id, full_name=full_name, email=email)
+        customer = Customer(user_id=user.id, full_name=full_name, email=email, **fields)
         db.add(customer)
         await db.flush()
         await db.commit()

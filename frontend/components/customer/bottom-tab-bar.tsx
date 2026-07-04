@@ -27,7 +27,7 @@ export function BottomTabBar() {
             <li key={tab.href} className="flex-1">
               <Link
                 href={tab.href}
-                className="relative flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium text-muted-foreground transition-transform duration-150 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-90 active:duration-100"
+                className="relative flex flex-col items-center justify-center gap-0.5 py-2.5 text-[10px] font-medium whitespace-nowrap text-muted-foreground transition-transform duration-150 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-90 active:duration-100"
                 aria-current={isActive ? "page" : undefined}
               >
                 {isActive && (

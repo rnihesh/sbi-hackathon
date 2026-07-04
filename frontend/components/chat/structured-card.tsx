@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { motion } from "framer-motion"
 import { Check } from "lucide-react"
 
@@ -104,6 +105,12 @@ export function StructuredCard({
         {payload.offers.map((offer, index) => (
           <ProductOfferCard key={`${offer.name}-${index}`} offer={offer} onCta={onOfferCta} />
         ))}
+        <Link
+          href="/app/products"
+          className="self-start text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+        >
+          See all products
+        </Link>
       </div>
     )
   }
