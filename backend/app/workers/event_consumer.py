@@ -351,12 +351,22 @@ async def run_forever(stop_event: asyncio.Event) -> None:
 
 
 async def _amain() -> None:
+    # The proactive scheduler runs as a sibling asyncio task in THIS process (one
+    # deployable, shared graph/checkpointer/Redis handles and agent-run semaphore),
+    # not a separate worker. Both share one stop_event so a single SIGTERM drains
+    # the stream consumer and the sweep loop together. Imported here (not at module
+    # top) so the scheduler's `from event_consumer import _agent_run_semaphore` can
+    # never form an import cycle.
+    from app.workers.scheduler import run_scheduler_forever
+
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
-    await run_forever(stop_event)
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(run_forever(stop_event))
+        tg.create_task(run_scheduler_forever(stop_event))
 
 
 def main() -> None:

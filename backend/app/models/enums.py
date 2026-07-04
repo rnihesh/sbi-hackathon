@@ -78,6 +78,7 @@ class MessageRole(StrEnum):
 class AgentTriggerType(StrEnum):
     CHAT = "chat"
     EVENT = "event"
+    SCHEDULED = "scheduled"  # proactive periodic sweep (app.workers.scheduler)
 
 
 class AgentRunStatus(StrEnum):

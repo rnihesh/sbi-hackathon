@@ -1,8 +1,10 @@
+import type * as React from "react"
+
 export function ConsolePageHeader({
   title,
   description,
 }: {
-  title: string
+  title: React.ReactNode
   description: string
 }) {
   return (

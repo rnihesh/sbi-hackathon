@@ -7,6 +7,7 @@ import { formatRelativeTime, humanizeIdentifier } from "@/lib/format"
 import { normalizeLead } from "@/lib/console-types"
 import type { Lead } from "@/lib/console-types"
 import { ConsolePageHeader } from "@/components/console/page-header"
+import { CustomerLink } from "@/components/console/customer-link"
 import { IntentScoreBar } from "@/components/console/intent-score-bar"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -18,6 +19,14 @@ function stageBadgeVariant(stage: string): "default" | "destructive" | "secondar
   if (stage === "converted") return "default"
   if (stage === "lost") return "destructive"
   return "secondary"
+}
+
+/** The lead's display name - linked to the 360 view once it has converted to a
+ * linked `Customer` (prospects with no `customer` yet have nowhere to link). */
+function LeadName({ lead }: { lead: Lead }) {
+  const name = lead.name ?? lead.customer?.full_name ?? "Unnamed lead"
+  if (!lead.customer) return <>{name}</>
+  return <CustomerLink id={lead.customer.id}>{name}</CustomerLink>
 }
 
 export default function LeadsPage() {
@@ -69,7 +78,7 @@ export default function LeadsPage() {
                 <CardContent className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="min-w-0 truncate text-sm font-medium">
-                      {lead.name ?? "Unnamed lead"}
+                      <LeadName lead={lead} />
                     </span>
                     <Badge variant={stageBadgeVariant(lead.stage)} className="shrink-0 capitalize">
                       {humanizeIdentifier(lead.stage)}
@@ -103,7 +112,9 @@ export default function LeadsPage() {
                 {leads.map((lead) => (
                   <tr key={lead.id}>
                     <td className="px-4 py-3">
-                      <p className="font-medium">{lead.name ?? "Unnamed lead"}</p>
+                      <p className="font-medium">
+                        <LeadName lead={lead} />
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         {lead.email ?? lead.phone ?? "No contact on file"} &middot; via {lead.source}
                       </p>

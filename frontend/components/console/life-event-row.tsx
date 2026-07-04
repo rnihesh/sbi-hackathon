@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils"
 import { formatRelativeTime, humanizeIdentifier } from "@/lib/format"
 import { ConfidenceRing } from "@/components/console/confidence-ring"
+import { CustomerLink } from "@/components/console/customer-link"
 import type { LifeEventItem } from "@/lib/console-types"
 
 const TYPE_ICON: Record<string, LucideIcon> = {
@@ -45,7 +46,8 @@ export function LifeEventRow({ event }: { event: LifeEventItem }) {
           <p className="text-xs text-muted-foreground">{formatRelativeTime(event.detected_at)}</p>
           <p className="text-sm font-medium">{humanizeIdentifier(event.type)}</p>
           <p className="text-xs text-muted-foreground">
-            {event.customer.full_name} &middot; <span className="capitalize">{event.status}</span>
+            <CustomerLink id={event.customer.id}>{event.customer.full_name}</CustomerLink> &middot;{" "}
+            <span className="capitalize">{event.status}</span>
           </p>
           {hasEvidence && (
             <button

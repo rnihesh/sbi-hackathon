@@ -46,6 +46,134 @@ export interface CustomerSearchResult {
   city: string | null
 }
 
+// ---------------------------------------------------------------------------
+// Customer 360 - mirrors `app.schemas.console.{CustomerDetailOut,
+// CustomerAccountOut,CustomerHoldingOut,CustomerStatsOut,CustomerDetailResponse,
+// TimelineItemOut}` (`GET /console/customers/{id}`, `GET
+// /console/customers/{id}/timeline`).
+// ---------------------------------------------------------------------------
+
+export interface CustomerDetail {
+  id: string
+  full_name: string
+  email: string | null
+  phone: string | null
+  city: string | null
+  segment: string | null
+  digital_maturity: string
+  churn_risk: number
+  preferred_language: string | null
+  created_at: string
+}
+
+export interface CustomerAccountSummary {
+  type: string
+  balance_paise: number
+  status: string
+}
+
+export interface CustomerHoldingProduct {
+  code: string
+  name: string
+  category: string
+}
+
+export interface CustomerHoldingSummary {
+  product: CustomerHoldingProduct
+  status: string
+}
+
+export interface CustomerStats {
+  transactions_90d: number
+  agent_runs_total: number
+  proposals_pending: number
+  nudges_sent: number
+  life_events: number
+}
+
+export interface CustomerDetailResponse {
+  customer: CustomerDetail
+  accounts: CustomerAccountSummary[]
+  holdings: CustomerHoldingSummary[]
+  stats: CustomerStats
+}
+
+export type TimelineItemType = "agent_run" | "life_event" | "proposal" | "nudge" | "notification"
+
+export interface TimelineAgentRunData {
+  run_id: string
+  agent: string
+  trigger: string
+  status: string
+  cost_usd: string
+  started_at: string
+}
+
+export interface TimelineLifeEventData {
+  type: string
+  confidence: number
+  detected_at: string
+}
+
+export interface TimelineProposalData {
+  title: string
+  status: string
+  created_at: string
+  decided_at: string | null
+}
+
+export interface TimelineNudgeData {
+  title: string
+  status: string
+  created_at: string
+}
+
+export interface TimelineNotificationData {
+  kind: string
+  title: string
+  created_at: string
+}
+
+export interface TimelineAgentRunItem {
+  type: "agent_run"
+  ts: string
+  data: TimelineAgentRunData
+}
+
+export interface TimelineLifeEventItem {
+  type: "life_event"
+  ts: string
+  data: TimelineLifeEventData
+}
+
+export interface TimelineProposalItem {
+  type: "proposal"
+  ts: string
+  data: TimelineProposalData
+}
+
+export interface TimelineNudgeItem {
+  type: "nudge"
+  ts: string
+  data: TimelineNudgeData
+}
+
+export interface TimelineNotificationItem {
+  type: "notification"
+  ts: string
+  data: TimelineNotificationData
+}
+
+/** One merged-feed entry - a discriminated union on `type`, so a `switch`/
+ * narrowing check on it also narrows `data` to the matching `Timeline*Data`
+ * shape without a manual cast. */
+export type TimelineItem =
+  | TimelineAgentRunItem
+  | TimelineLifeEventItem
+  | TimelineProposalItem
+  | TimelineNudgeItem
+  | TimelineNotificationItem
+
 /** Mirrors `app.schemas.console.ConsoleHealthResponse` (`GET /console/health`). */
 export interface ConsoleHealth {
   worker: {

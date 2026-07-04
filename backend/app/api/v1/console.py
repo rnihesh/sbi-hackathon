@@ -41,11 +41,11 @@ from app.core.redis import (
 )
 from app.core.security import get_current_user
 from app.models.audit import AuditLog
-from app.models.banking import Account
+from app.models.banking import Account, Transaction
 from app.models.catalog import Holding, Product
 from app.models.crm import Lead
 from app.models.customer import Customer
-from app.models.engagement import LifeEvent, Nudge, Proposal
+from app.models.engagement import LifeEvent, Notification, Nudge, Proposal
 from app.models.enums import (
     AgentTriggerType,
     HoldingStatus,
@@ -63,7 +63,13 @@ from app.schemas.console import (
     CostBreakdownRow,
     CostSeriesPoint,
     CostsResponse,
+    CustomerAccountOut,
+    CustomerDetailOut,
+    CustomerDetailResponse,
+    CustomerHoldingOut,
+    CustomerHoldingProductOut,
     CustomerSearchOut,
+    CustomerStatsOut,
     DetectionResponse,
     DetectionRow,
     DetectionSummary,
@@ -83,8 +89,10 @@ from app.schemas.console import (
     ProposalOut,
     ProposalOutcomesResponse,
     ProposalRejectRequest,
+    SchedulerHealthOut,
     SimInjectEventRequest,
     SimInjectEventResponse,
+    TimelineItemOut,
     TimeseriesPoint,
     TimeseriesResponse,
     TraceCustomerOut,
@@ -143,6 +151,261 @@ async def search_customers(
     return [
         CustomerSearchOut(id=row.id, full_name=row.full_name, city=row.city) for row in rows
     ]
+
+
+# ===========================================================================
+# Customer 360 ("RM sees everything" detail view)
+# ===========================================================================
+
+_TXN_LOOKBACK_DAYS = 90
+"""Window for the `transactions_90d` stat tile - matches the sim injector's own
+90-day attribution window (see `_INJECT_WINDOW_DAYS` below) for consistency."""
+
+
+@router.get("/customers/{customer_id}", response_model=CustomerDetailResponse)
+async def get_customer_detail(
+    customer_id: uuid.UUID, staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> CustomerDetailResponse:
+    """Profile + accounts + holdings + at-a-glance stats for one customer - the
+    top of the staff "RM sees everything" 360 view."""
+    customer = await db.get(
+        Customer,
+        customer_id,
+        options=[
+            selectinload(Customer.accounts),
+            selectinload(Customer.holdings).selectinload(Holding.product),
+        ],
+    )
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    account_ids = select(Account.id).where(Account.customer_id == customer.id).scalar_subquery()
+    since = datetime.now(UTC) - timedelta(days=_TXN_LOOKBACK_DAYS)
+    transactions_90d = (
+        await db.scalar(
+            select(func.count())
+            .select_from(Transaction)
+            .where(Transaction.account_id.in_(account_ids), Transaction.ts >= since)
+        )
+        or 0
+    )
+    agent_runs_total = (
+        await db.scalar(
+            select(func.count()).select_from(AgentRun).where(AgentRun.customer_id == customer.id)
+        )
+        or 0
+    )
+    proposals_pending = (
+        await db.scalar(
+            select(func.count())
+            .select_from(Proposal)
+            .where(
+                Proposal.customer_id == customer.id, Proposal.status == ProposalStatus.PENDING
+            )
+        )
+        or 0
+    )
+    nudges_sent = (
+        await db.scalar(
+            select(func.count()).select_from(Nudge).where(Nudge.customer_id == customer.id)
+        )
+        or 0
+    )
+    life_events_total = (
+        await db.scalar(
+            select(func.count()).select_from(LifeEvent).where(LifeEvent.customer_id == customer.id)
+        )
+        or 0
+    )
+
+    return CustomerDetailResponse(
+        customer=CustomerDetailOut(
+            id=customer.id,
+            full_name=customer.full_name,
+            email=customer.email,
+            phone=customer.phone,
+            city=customer.city,
+            segment=customer.segment,
+            digital_maturity=customer.digital_maturity.value,
+            churn_risk=customer.churn_risk,
+            preferred_language=customer.preferred_language,
+            created_at=customer.created_at,
+        ),
+        accounts=[
+            CustomerAccountOut(
+                type=a.type.value, balance_paise=a.balance_paise, status=a.status.value
+            )
+            for a in customer.accounts
+        ],
+        holdings=[
+            CustomerHoldingOut(
+                product=CustomerHoldingProductOut(
+                    code=h.product.code, name=h.product.name, category=h.product.category
+                ),
+                status=h.status.value,
+            )
+            for h in customer.holdings
+        ],
+        stats=CustomerStatsOut(
+            transactions_90d=int(transactions_90d),
+            agent_runs_total=int(agent_runs_total),
+            proposals_pending=int(proposals_pending),
+            nudges_sent=int(nudges_sent),
+            life_events=int(life_events_total),
+        ),
+    )
+
+
+@router.get("/customers/{customer_id}/timeline", response_model=list[TimelineItemOut])
+async def get_customer_timeline(
+    customer_id: uuid.UUID,
+    staff: StaffUser,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+) -> list[TimelineItemOut]:
+    """Merged, reverse-chronological feed of everything that happened for one
+    customer: agent runs, life events, proposals, nudges, notifications.
+
+    Each source is fetched independently, already ordered newest-first and
+    capped at ``limit`` rows, *then* merged and re-sorted before the final
+    ``limit`` cut is applied - fetching only ``limit`` per source (rather than
+    each source's full history) is still provably correct: the final top-
+    ``limit`` merged items can never draw more than ``limit`` rows from any
+    single source.
+    """
+    exists = await db.scalar(select(Customer.id).where(Customer.id == customer_id))
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    runs = (
+        (
+            await db.execute(
+                select(AgentRun)
+                .where(AgentRun.customer_id == customer_id)
+                .order_by(AgentRun.started_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    life_events = (
+        (
+            await db.execute(
+                select(LifeEvent)
+                .where(LifeEvent.customer_id == customer_id)
+                .order_by(LifeEvent.detected_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    proposals = (
+        (
+            await db.execute(
+                select(Proposal)
+                .where(Proposal.customer_id == customer_id)
+                .order_by(Proposal.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    nudges = (
+        (
+            await db.execute(
+                select(Nudge)
+                .where(Nudge.customer_id == customer_id)
+                .order_by(Nudge.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    notifications = (
+        (
+            await db.execute(
+                select(Notification)
+                .where(Notification.customer_id == customer_id)
+                .order_by(Notification.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    items: list[TimelineItemOut] = []
+    for run in runs:
+        items.append(
+            TimelineItemOut(
+                type="agent_run",
+                ts=run.started_at,
+                data={
+                    "run_id": str(run.id),
+                    "agent": run.agent,
+                    "trigger": run.trigger.value,
+                    "status": run.status.value,
+                    "cost_usd": str(run.cost_usd),
+                    "started_at": run.started_at.isoformat(),
+                },
+            )
+        )
+    for event in life_events:
+        items.append(
+            TimelineItemOut(
+                type="life_event",
+                ts=event.detected_at,
+                data={
+                    "type": event.type.value,
+                    "confidence": event.confidence,
+                    "detected_at": event.detected_at.isoformat(),
+                },
+            )
+        )
+    for proposal in proposals:
+        items.append(
+            TimelineItemOut(
+                type="proposal",
+                ts=proposal.created_at,
+                data={
+                    "title": proposal.title,
+                    "status": proposal.status.value,
+                    "created_at": proposal.created_at.isoformat(),
+                    "decided_at": proposal.decided_at.isoformat() if proposal.decided_at else None,
+                },
+            )
+        )
+    for nudge in nudges:
+        items.append(
+            TimelineItemOut(
+                type="nudge",
+                ts=nudge.created_at,
+                data={
+                    "title": nudge.title,
+                    "status": nudge.status.value,
+                    "created_at": nudge.created_at.isoformat(),
+                },
+            )
+        )
+    for notification in notifications:
+        items.append(
+            TimelineItemOut(
+                type="notification",
+                ts=notification.created_at,
+                data={
+                    "kind": notification.kind.value,
+                    "title": notification.title,
+                    "created_at": notification.created_at.isoformat(),
+                },
+            )
+        )
+
+    items.sort(key=lambda item: item.ts, reverse=True)
+    return items[:limit]
 
 
 # ===========================================================================
@@ -255,6 +518,24 @@ async def _dlq_recent(redis: Any) -> list[DlqEntrySummaryOut]:
     return summaries
 
 
+async def _scheduler_health(redis: Any, db: AsyncSession) -> SchedulerHealthOut:
+    """Proactive-sweep loop state: enabled flag, last tick, sweeps today, and the
+    current count of sweep-eligible customers (see `app.workers.scheduler`)."""
+    from app.workers import scheduler
+
+    try:
+        eligible = await scheduler.count_eligible_customers(db)
+    except Exception:
+        logger.warning("console_health_scheduler_db_failed", exc_info=True)
+        eligible = 0
+    return SchedulerHealthOut(
+        enabled=get_settings().scheduler_enabled,
+        last_tick_at=await scheduler.read_last_tick(redis),
+        swept_today=await scheduler.swept_today_count(redis),
+        next_eligible_estimate=eligible,
+    )
+
+
 @router.get("/health", response_model=ConsoleHealthResponse)
 async def console_health(
     staff: StaffUser, db: AsyncSession = Depends(get_db)
@@ -265,6 +546,7 @@ async def console_health(
     worker = await _worker_health(redis)
     llm_budget = await _llm_budget_today(db)
     dlq_recent = await _dlq_recent(redis)
+    scheduler_health = await _scheduler_health(redis, db)
     return ConsoleHealthResponse(
         worker=worker,
         api=api_status,
@@ -272,6 +554,7 @@ async def console_health(
         redis_latency_ms=redis_latency_ms,
         llm_budget=llm_budget,
         dlq_recent=dlq_recent,
+        scheduler=scheduler_health,
     )
 
 

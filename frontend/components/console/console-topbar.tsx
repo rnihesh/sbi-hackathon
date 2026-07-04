@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ConsoleMobileNav } from "@/components/console/console-mobile-nav"
+import { CustomerSearchButton } from "@/components/console/customer-search-button"
 import { WorkerHealthIndicator } from "@/components/console/worker-health-indicator"
 import { DemoTour } from "@/components/console/demo-tour"
 import { CONSOLE_NAV_ITEMS } from "@/components/console/nav-items"
@@ -53,6 +54,7 @@ export function ConsoleTopbar() {
       </div>
 
       <div className="flex items-center gap-2">
+        <CustomerSearchButton />
         <WorkerHealthIndicator />
         <DemoTour />
         <ThemeToggle />

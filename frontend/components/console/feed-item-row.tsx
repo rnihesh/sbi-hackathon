@@ -4,6 +4,7 @@ import { Activity, Bell, ClipboardCheck, Sparkles, type LucideIcon } from "lucid
 import { cn } from "@/lib/utils"
 import { formatRelativeTime } from "@/lib/format"
 import type { FeedItem, FeedItemType } from "@/lib/console-types"
+import { CustomerLink } from "@/components/console/customer-link"
 import { Button } from "@/components/ui/button"
 
 const TYPE_ICON: Record<FeedItemType, LucideIcon> = {
@@ -56,7 +57,13 @@ export function FeedItemRow({ item }: { item: FeedItem }) {
         <p className="truncate text-sm">{item.summary}</p>
         <p className="text-xs text-muted-foreground">
           {TYPE_LABEL[item.type] ?? item.type}
-          {item.customer_id && <> &middot; customer {item.customer_id.slice(0, 8)}</>}
+          {item.customer_id && (
+            <>
+              {" "}
+              &middot; customer{" "}
+              <CustomerLink id={item.customer_id}>{item.customer_id.slice(0, 8)}</CustomerLink>
+            </>
+          )}
         </p>
       </div>
       {action && (

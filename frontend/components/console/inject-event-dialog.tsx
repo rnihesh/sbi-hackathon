@@ -1,12 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronsUpDown, Loader2, Sparkles } from "lucide-react"
+import { Loader2, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
 import { api, API_V1, describeApiError } from "@/lib/api"
 import type { CustomerSearchResult } from "@/lib/console-types"
+import { CustomerCombobox } from "@/components/console/customer-combobox"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -16,9 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
 /** The 6 sim life-event scripts `POST /console/sim/inject-event` accepts - labels
  * and descriptions mirror `app.sim.events`'s script docstrings exactly, so this
@@ -56,59 +55,26 @@ const EVENT_TYPES = [
   },
 ] as const
 
-const SEARCH_DEBOUNCE_MS = 250
-
 export function InjectEventDialog() {
   const [open, setOpen] = React.useState(false)
   // Opened from a plain button, not a `DialogTrigger`, so Radix has no
   // trigger ref to restore focus to on close (falls back to `<body>` -
   // verified live on the sign-in sheet, same gap). Track it directly.
   const triggerRef = React.useRef<HTMLButtonElement>(null)
-  const [customerPickerOpen, setCustomerPickerOpen] = React.useState(false)
-  const [query, setQuery] = React.useState("")
-  const [options, setOptions] = React.useState<CustomerSearchResult[]>([])
-  const [loadingOptions, setLoadingOptions] = React.useState(false)
   const [customer, setCustomer] = React.useState<CustomerSearchResult | null>(null)
   const [eventType, setEventType] = React.useState<string>("")
   const [submitting, setSubmitting] = React.useState(false)
   const submittingRef = React.useRef(false)
-
-  React.useEffect(() => {
-    if (!open) return
-    const controller = new AbortController()
-    let cancelled = false
-    setLoadingOptions(true)
-    const handle = setTimeout(() => {
-      const params = new URLSearchParams({ limit: "20" })
-      if (query.trim()) params.set("q", query.trim())
-      api
-        .get<CustomerSearchResult[]>(`${API_V1}/console/customers?${params.toString()}`, {
-          signal: controller.signal,
-        })
-        .then((res) => {
-          if (!cancelled) setOptions(res)
-        })
-        .catch(() => {
-          // Non-critical search failure - leave the previous options in place.
-        })
-        .finally(() => {
-          if (!cancelled) setLoadingOptions(false)
-        })
-    }, SEARCH_DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      controller.abort()
-      clearTimeout(handle)
-    }
-  }, [open, query])
+  // `CustomerCombobox` owns its own search query/results state internally;
+  // bumping its `key` on close forces a fresh instance next open instead of
+  // carrying over a stale search from the previous session.
+  const [comboboxResetKey, setComboboxResetKey] = React.useState(0)
 
   function resetAndClose() {
     setOpen(false)
-    setCustomerPickerOpen(false)
     setCustomer(null)
     setEventType("")
-    setQuery("")
-    setOptions([])
+    setComboboxResetKey((key) => key + 1)
   }
 
   async function handleSubmit() {
@@ -160,70 +126,12 @@ export function InjectEventDialog() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="inject-event-customer">Customer</Label>
-              <Popover open={customerPickerOpen} onOpenChange={setCustomerPickerOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    id="inject-event-customer"
-                    type="button"
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={customerPickerOpen}
-                    className="w-full justify-between font-normal"
-                  >
-                    <span className="truncate">
-                      {customer
-                        ? `${customer.full_name}${customer.city ? ` - ${customer.city}` : ""}`
-                        : "Search customers..."}
-                    </span>
-                    <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="start"
-                  className="w-(--radix-popover-trigger-width) p-0"
-                >
-                  <div className="border-b border-border p-2">
-                    <Input
-                      autoFocus
-                      placeholder="Search by name..."
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                    />
-                  </div>
-                  <div className="max-h-56 overflow-y-auto p-1">
-                    {loadingOptions ? (
-                      <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" /> Searching...
-                      </div>
-                    ) : options.length === 0 ? (
-                      <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-                        No customers found.
-                      </p>
-                    ) : (
-                      options.map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => {
-                            setCustomer(opt)
-                            setCustomerPickerOpen(false)
-                          }}
-                          className={cn(
-                            "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                            customer?.id === opt.id && "bg-muted"
-                          )}
-                        >
-                          <span className="min-w-0 truncate">
-                            {opt.full_name}
-                            {opt.city && <span className="text-muted-foreground"> - {opt.city}</span>}
-                          </span>
-                          {customer?.id === opt.id && <Check className="size-3.5 shrink-0" />}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
+              <CustomerCombobox
+                key={comboboxResetKey}
+                value={customer}
+                onChange={setCustomer}
+                triggerId="inject-event-customer"
+              />
             </div>
 
             <div className="flex flex-col gap-1.5">

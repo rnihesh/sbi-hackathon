@@ -11,6 +11,7 @@ import { formatCount, formatLatency, formatRelativeTime, formatUsd } from "@/lib
 import { staggerContainer, staggerItem } from "@/lib/motion"
 import type { TraceDetail } from "@/lib/console-types"
 import { ConsolePageHeader } from "@/components/console/page-header"
+import { CustomerLink } from "@/components/console/customer-link"
 import { TraceStatusBadge } from "@/components/console/trace-status-badge"
 import { TriggerChip } from "@/components/console/trigger-chip"
 import { StepKindIcon } from "@/components/console/step-kind-icon"
@@ -79,7 +80,13 @@ export default function TraceDetailPage() {
               <TraceStatusBadge status={trace.status} />
             </div>
             <ConsolePageHeader
-              title={trace.customer?.full_name ?? "No linked customer"}
+              title={
+                trace.customer ? (
+                  <CustomerLink id={trace.customer.id}>{trace.customer.full_name}</CustomerLink>
+                ) : (
+                  "No linked customer"
+                )
+              }
               description={`Started ${formatRelativeTime(trace.started_at)}${
                 trace.finished_at ? ` - finished ${formatRelativeTime(trace.finished_at)}` : ""
               }`}

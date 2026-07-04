@@ -3,6 +3,7 @@ import { Check, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatSecondsHuman, formatRelativeTime, humanizeIdentifier } from "@/lib/format"
 import type { DetectionResponse, DetectionRow } from "@/lib/console-types"
+import { CustomerLink } from "@/components/console/customer-link"
 import { StatTile } from "@/components/console/stat-tile"
 
 /** A check (matched) / cross (missed) chip in the single clay hue - clay fill for
@@ -94,7 +95,7 @@ export function DetectionScorecard({ data }: { data: DetectionResponse }) {
                     </span>
                   </td>
                   <td className="max-w-[10rem] truncate py-2.5 pr-4 text-muted-foreground">
-                    {row.customer_name}
+                    <CustomerLink id={row.customer_id}>{row.customer_name}</CustomerLink>
                   </td>
                   <td className="py-2.5 pr-4">
                     <DetectionCell row={row} />

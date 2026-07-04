@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -16,6 +16,80 @@ class CustomerSearchOut(BaseModel):
     id: uuid.UUID
     full_name: str
     city: str | None
+
+
+# ===========================================================================
+# Customer 360 (`GET /console/customers/{id}`, `GET /console/customers/{id}/timeline`)
+# ===========================================================================
+
+
+class CustomerDetailOut(BaseModel):
+    """The full staff-facing profile for one customer."""
+
+    id: uuid.UUID
+    full_name: str
+    email: str | None
+    phone: str | None
+    city: str | None
+    segment: str | None
+    digital_maturity: str
+    churn_risk: float
+    preferred_language: str | None
+    created_at: datetime
+
+
+class CustomerAccountOut(BaseModel):
+    type: str
+    balance_paise: int
+    status: str
+
+
+class CustomerHoldingProductOut(BaseModel):
+    code: str
+    name: str
+    category: str
+
+
+class CustomerHoldingOut(BaseModel):
+    product: CustomerHoldingProductOut
+    status: str
+
+
+class CustomerStatsOut(BaseModel):
+    """At-a-glance counters for the 360 view's stat tile row."""
+
+    transactions_90d: int
+    agent_runs_total: int
+    proposals_pending: int
+    nudges_sent: int
+    life_events: int
+
+
+class CustomerDetailResponse(BaseModel):
+    customer: CustomerDetailOut
+    accounts: list[CustomerAccountOut]
+    holdings: list[CustomerHoldingOut]
+    stats: CustomerStatsOut
+
+
+class TimelineItemOut(BaseModel):
+    """One entry in a customer's merged, reverse-chronological activity feed.
+
+    ``data`` is a plain JSON-safe dict (not a discriminated sub-model) whose
+    shape depends on ``type`` - every value the endpoint puts in it is a
+    pre-stringified primitive (str/float/bool/None), never a raw UUID/Decimal/
+    datetime, so serialization is unambiguous regardless of the `Any` typing:
+
+    - ``agent_run``: ``run_id, agent, trigger, status, cost_usd, started_at``
+    - ``life_event``: ``type, confidence, detected_at``
+    - ``proposal``: ``title, status, created_at, decided_at``
+    - ``nudge``: ``title, status, created_at``
+    - ``notification``: ``kind, title, created_at``
+    """
+
+    type: Literal["agent_run", "life_event", "proposal", "nudge", "notification"]
+    ts: datetime
+    data: dict[str, Any]
 
 
 class LeadCustomerOut(BaseModel):
@@ -207,6 +281,19 @@ class DlqEntrySummaryOut(BaseModel):
     error: str | None
 
 
+class SchedulerHealthOut(BaseModel):
+    """State of the proactive sweep loop (`app.workers.scheduler`) for the console.
+
+    `swept_today` and `last_tick_at` come from Redis keys the loop writes;
+    `next_eligible_estimate` is the current count of sweep-eligible customers
+    (has an account, no agent run in the cooldown window)."""
+
+    enabled: bool
+    last_tick_at: datetime | None
+    swept_today: int
+    next_eligible_estimate: int
+
+
 class ConsoleHealthResponse(BaseModel):
     worker: WorkerHealthOut
     api: str
@@ -214,6 +301,7 @@ class ConsoleHealthResponse(BaseModel):
     redis_latency_ms: float | None
     llm_budget: LlmBudgetOut
     dlq_recent: list[DlqEntrySummaryOut]
+    scheduler: SchedulerHealthOut
 
 
 class ErrorLogEntryOut(BaseModel):

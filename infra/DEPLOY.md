@@ -51,6 +51,11 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | (empty) | real IAM creds | SES send permission in `ap-south-1`. |
 | `AWS_REGION` | `ap-south-1` | `ap-south-1` | SES region. |
 | `SES_FROM_ADDRESS` | `no-reply@niheshr.com` | `no-reply@niheshr.com` | Verified SES sender. |
+| `SCHEDULER_ENABLED` | `true` | `true` | Proactive sweep loop (runs inside the worker). Set `false` to disable; also honored as a kill switch mid-run. |
+| `SWEEP_INTERVAL_SECONDS` | `3600` | `3600` | Base sweep cadence (jittered +-10% per tick). |
+| `SWEEP_CUSTOMER_COOLDOWN_DAYS` | `7` | `7` | A customer is swept only if they had no agent run in this many days. |
+| `SWEEP_BATCH_SIZE` | `3` | `3` | Max customers swept per tick. |
+| `SWEEP_DAILY_CAP` | `10` | `10` | Hard ceiling on sweeps per UTC day. A full cap-day with gpt-4o-mini costs about 10 x $0.002. |
 
 `NEXT_PUBLIC_API_URL` is consumed at `docker compose build` time (compose reads it
 from your shell env or the repo-root `.env`, defaulting to
@@ -199,3 +204,12 @@ the `X-Forwarded-*` headers from either proxy for correct scheme/host handling.
   seconds; the healthcheck `start-period` covers this.
 - To publish nothing but the proxy, drop the `ports:` blocks on `backend` and
   `frontend` and put the proxy on the `sarathi` network instead.
+- The proactive scheduler runs as a sibling asyncio task INSIDE the `worker`
+  process (`app.workers.event_consumer`), not a separate service, so there is
+  nothing extra to deploy. Run exactly one `worker` replica: a second replica
+  would double the sweep loop (the per-customer Redis cooldown and per-UTC-day
+  `SWEEP_DAILY_CAP` counter are shared and bound total spend, but one replica is
+  the intended topology). Sweeps only fire while the day's spend is under
+  `LLM_DAILY_BUDGET_USD` and can only propose to the HITL queue - a sweep never
+  sends an email or takes an impactful action on its own. Watch it in the console
+  health panel (`scheduler` block) or via `grep scheduler_` in the worker logs.

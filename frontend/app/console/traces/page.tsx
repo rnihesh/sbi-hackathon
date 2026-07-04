@@ -12,6 +12,7 @@ import { formatCount, formatLatency, formatRelativeTime, formatUsd, pluralize } 
 import { staggerContainer, staggerItem } from "@/lib/motion"
 import type { TraceSummary } from "@/lib/console-types"
 import { ConsolePageHeader } from "@/components/console/page-header"
+import { CustomerLink } from "@/components/console/customer-link"
 import { TraceStatusBadge } from "@/components/console/trace-status-badge"
 import { TriggerChip } from "@/components/console/trigger-chip"
 import { ListRowSkeleton } from "@/components/console/list-row-skeleton"
@@ -120,35 +121,45 @@ function TracesPageContent() {
           <div className="flex flex-col gap-3 md:hidden">
             {traces.map((trace) => (
               <motion.div key={trace.run_id} variants={staggerItem}>
-                <Link href={`/console/traces/${trace.run_id}`}>
-                  <Card className="transition-colors hover:bg-muted/50">
-                    <CardContent className="flex flex-col gap-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary" className="capitalize">
-                            {trace.agent}
-                          </Badge>
-                          <TriggerChip trigger={trace.trigger} />
-                        </div>
-                        <TraceStatusBadge status={trace.status} />
+                {/* A `div` (not `Link`) wrapping the whole card, not an anchor -
+                    the customer name below is a real nested `Link` of its own,
+                    and anchors can't legally nest. */}
+                <Card
+                  onClick={() => router.push(`/console/traces/${trace.run_id}`)}
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                >
+                  <CardContent className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="capitalize">
+                          {trace.agent}
+                        </Badge>
+                        <TriggerChip trigger={trace.trigger} />
                       </div>
-                      <p className="truncate text-sm font-medium">
-                        {trace.customer?.full_name ?? "No customer"}
-                      </p>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums text-muted-foreground">
-                        <span>{formatRelativeTime(trace.started_at)}</span>
-                        <span>{formatLatency(trace.latency_ms)}</span>
-                        <span>
-                          {formatCount(trace.tokens_in)}/{formatCount(trace.tokens_out)} tok
-                        </span>
-                        <span>{formatUsd(trace.cost_usd)}</span>
-                        <span>
-                          {trace.steps_count} {pluralize(trace.steps_count, "step")}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
+                      <TraceStatusBadge status={trace.status} />
+                    </div>
+                    <p className="truncate text-sm font-medium">
+                      {trace.customer ? (
+                        <CustomerLink id={trace.customer.id} onClick={(e) => e.stopPropagation()}>
+                          {trace.customer.full_name}
+                        </CustomerLink>
+                      ) : (
+                        "No customer"
+                      )}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums text-muted-foreground">
+                      <span>{formatRelativeTime(trace.started_at)}</span>
+                      <span>{formatLatency(trace.latency_ms)}</span>
+                      <span>
+                        {formatCount(trace.tokens_in)}/{formatCount(trace.tokens_out)} tok
+                      </span>
+                      <span>{formatUsd(trace.cost_usd)}</span>
+                      <span>
+                        {trace.steps_count} {pluralize(trace.steps_count, "step")}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
               </motion.div>
             ))}
           </div>
@@ -191,7 +202,15 @@ function TracesPageContent() {
                     <td className="px-4 py-3">
                       <TriggerChip trigger={trace.trigger} />
                     </td>
-                    <td className="px-4 py-3">{trace.customer?.full_name ?? "-"}</td>
+                    <td className="px-4 py-3">
+                      {trace.customer ? (
+                        <CustomerLink id={trace.customer.id} onClick={(e) => e.stopPropagation()}>
+                          {trace.customer.full_name}
+                        </CustomerLink>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <TraceStatusBadge status={trace.status} />
                     </td>

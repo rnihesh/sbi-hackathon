@@ -119,6 +119,28 @@ class Settings(BaseSettings):
     event_cooldown_seconds: int = 300
     """Per-(customer, rule) cooldown before another agent run may be triggered."""
 
+    # --- proactive scheduler (app.workers.scheduler; runs inside the event
+    # consumer process as a sibling asyncio task) ---
+    scheduler_enabled: bool = True
+    """Master switch for the periodic sweep loop. When False the loop no-ops
+    instantly each tick (and is re-checked between customers as a kill switch)."""
+
+    sweep_interval_seconds: int = 3600
+    """Base cadence of the sweep loop (jittered +-10% per tick to de-sync)."""
+
+    sweep_customer_cooldown_days: int = 7
+    """A customer is sweep-eligible only if they have had NO agent run in this
+    many days; a Redis per-customer cooldown of the same length is also set on
+    selection so a sweep is never repeated inside the window."""
+
+    sweep_batch_size: int = 3
+    """Max customers swept per tick."""
+
+    sweep_daily_cap: int = 10
+    """Hard ceiling on sweeps per UTC day (Redis counter). The loop stops for the
+    day once reached, regardless of how many customers are eligible - a spend and
+    load safety rail on the unattended path."""
+
     @property
     def staff_email_list(self) -> list[str]:
         raw = self.staff_emails.strip()

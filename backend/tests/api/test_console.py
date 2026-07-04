@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -15,22 +16,28 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import TXN_EVENTS, get_redis
-from app.models.banking import Account
+from app.models.banking import Account, Transaction
+from app.models.catalog import Holding, Product
 from app.models.crm import Lead
 from app.models.customer import Customer
-from app.models.engagement import LifeEvent, Nudge, Proposal
+from app.models.engagement import LifeEvent, Notification, Nudge, Proposal
 from app.models.enums import (
     AccountStatus,
     AccountType,
     AgentRunStatus,
     AgentTriggerType,
+    DigitalMaturity,
+    HoldingStatus,
     LeadStage,
     LifeEventStatus,
     LifeEventType,
     LlmTier,
+    NotificationKind,
     NudgeStatus,
     ProposalKind,
     ProposalStatus,
+    TxnChannel,
+    TxnDirection,
 )
 from app.models.identity import User
 from app.models.tracing import AgentRun, LlmCall
@@ -574,3 +581,262 @@ async def test_feed_events_yields_published_activity() -> None:
 
     events = [event async for event in feed_events(redis, "0", is_disconnected)]
     assert any("hello from the feed" in e["data"] for e in events)
+
+
+# ===========================================================================
+# Customer 360 (detail + timeline)
+# ===========================================================================
+
+
+async def test_customer_detail_requires_staff(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, target = await make_customer(email="detail-non-staff@example.com")
+    resp = await client.get(f"/api/v1/console/customers/{target.id}", cookies=auth_cookies(user))
+    assert resp.status_code == 403
+
+
+async def test_customer_detail_404_for_unknown_id(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    resp = await client.get(
+        f"/api/v1/console/customers/{uuid.uuid4()}", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 404
+
+
+async def test_customer_detail_returns_profile_accounts_holdings_stats(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    _u, customer = await make_customer(
+        email="detailcust@example.com",
+        full_name="Detail Customer",
+        phone="9876543210",
+        city="Mumbai",
+        segment="premium",
+        digital_maturity=DigitalMaturity.HIGH,
+        churn_risk=0.42,
+        preferred_language="hi",
+    )
+
+    account = Account(
+        customer_id=customer.id, type=AccountType.SAVINGS,
+        balance_paise=150_000, status=AccountStatus.ACTIVE,
+    )
+    db.add(account)
+    await db.flush()  # need account.id for the transactions below
+
+    product = Product(code="MF001", name="Equity Growth Fund", category="mutual_fund")
+    db.add(product)
+    await db.flush()  # need product.id for the holding below
+    db.add(Holding(customer_id=customer.id, product_id=product.id, status=HoldingStatus.ACTIVE))
+
+    now = datetime.now(UTC)
+    db.add(
+        Transaction(
+            account_id=account.id, ts=now - timedelta(days=5), amount_paise=50_00,
+            direction=TxnDirection.DEBIT, channel=TxnChannel.UPI, balance_after_paise=100_000,
+        )
+    )
+    db.add(
+        Transaction(
+            # Outside the 90-day stats window - must not count.
+            account_id=account.id, ts=now - timedelta(days=200), amount_paise=20_00,
+            direction=TxnDirection.CREDIT, channel=TxnChannel.NEFT, balance_after_paise=120_000,
+        )
+    )
+    db.add(
+        AgentRun(
+            agent="engagement", trigger=AgentTriggerType.EVENT, status=AgentRunStatus.COMPLETED,
+            customer_id=customer.id, tokens_in=10, tokens_out=5, cost_usd=Decimal("0.002"),
+        )
+    )
+    db.add(
+        Proposal(
+            customer_id=customer.id, agent="engagement", kind=ProposalKind.NUDGE,
+            title="p1", body="b", action={"kind": "send_nudge"}, status=ProposalStatus.PENDING,
+        )
+    )
+    db.add(Nudge(customer_id=customer.id, title="n1", body="b", status=NudgeStatus.SENT))
+    db.add(
+        LifeEvent(
+            customer_id=customer.id, type=LifeEventType.JOB_CHANGE, confidence=0.7,
+            evidence={}, status=LifeEventStatus.DETECTED,
+        )
+    )
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/v1/console/customers/{customer.id}", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["customer"]["id"] == str(customer.id)
+    assert body["customer"]["full_name"] == "Detail Customer"
+    assert body["customer"]["phone"] == "9876543210"
+    assert body["customer"]["city"] == "Mumbai"
+    assert body["customer"]["segment"] == "premium"
+    assert body["customer"]["digital_maturity"] == "high"
+    assert body["customer"]["churn_risk"] == pytest.approx(0.42)
+    assert body["customer"]["preferred_language"] == "hi"
+
+    assert body["accounts"] == [{"type": "savings", "balance_paise": 150_000, "status": "active"}]
+    assert body["holdings"] == [
+        {
+            "product": {"code": "MF001", "name": "Equity Growth Fund", "category": "mutual_fund"},
+            "status": "active",
+        }
+    ]
+    assert body["stats"] == {
+        "transactions_90d": 1,
+        "agent_runs_total": 1,
+        "proposals_pending": 1,
+        "nudges_sent": 1,
+        "life_events": 1,
+    }
+
+
+async def test_customer_timeline_requires_staff(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, target = await make_customer(email="timeline-non-staff@example.com")
+    resp = await client.get(
+        f"/api/v1/console/customers/{target.id}/timeline", cookies=auth_cookies(user)
+    )
+    assert resp.status_code == 403
+
+
+async def test_customer_timeline_404_for_unknown_id(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    resp = await client.get(
+        f"/api/v1/console/customers/{uuid.uuid4()}/timeline", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 404
+
+
+async def _seed_one_of_each_timeline_type(
+    db: AsyncSession, customer: Customer, now: datetime
+) -> None:
+    """One row per timeline source type, each 1 second apart, oldest to newest:
+    notification, nudge, proposal, life_event, agent_run."""
+    db.add(
+        Notification(
+            customer_id=customer.id, kind=NotificationKind.OFFER, title="Offer notif",
+            body="b", created_at=now - timedelta(seconds=4),
+        )
+    )
+    db.add(
+        Nudge(
+            customer_id=customer.id, title="Nudge title", body="b", status=NudgeStatus.SENT,
+            created_at=now - timedelta(seconds=3),
+        )
+    )
+    db.add(
+        Proposal(
+            customer_id=customer.id, agent="engagement", kind=ProposalKind.NUDGE,
+            title="Proposal title", body="b", action={"kind": "send_nudge"},
+            status=ProposalStatus.PENDING, created_at=now - timedelta(seconds=2),
+        )
+    )
+    db.add(
+        LifeEvent(
+            customer_id=customer.id, type=LifeEventType.NEW_CHILD, confidence=0.9, evidence={},
+            status=LifeEventStatus.DETECTED, detected_at=now - timedelta(seconds=1),
+        )
+    )
+    db.add(
+        AgentRun(
+            agent="supervisor", trigger=AgentTriggerType.CHAT, status=AgentRunStatus.COMPLETED,
+            customer_id=customer.id, tokens_in=1, tokens_out=1, cost_usd=Decimal("0.001"),
+            started_at=now,
+        )
+    )
+    await db.commit()
+
+
+async def test_customer_timeline_merges_all_types_sorted_desc(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    _u, customer = await make_customer(email="timelinecust@example.com")
+    now = datetime.now(UTC)
+    await _seed_one_of_each_timeline_type(db, customer, now)
+
+    resp = await client.get(
+        f"/api/v1/console/customers/{customer.id}/timeline", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 200
+    items = resp.json()
+
+    assert [item["type"] for item in items] == [
+        "agent_run", "life_event", "proposal", "nudge", "notification",
+    ]
+    # Newest-first: each item's ts is >= the next one's.
+    timestamps = [item["ts"] for item in items]
+    assert timestamps == sorted(timestamps, reverse=True)
+
+    agent_run_data = items[0]["data"]
+    assert agent_run_data["agent"] == "supervisor"
+    assert agent_run_data["status"] == "completed"
+    assert Decimal(agent_run_data["cost_usd"]) == Decimal("0.001")
+    assert "run_id" in agent_run_data
+
+    life_event_data = items[1]["data"]
+    assert life_event_data["type"] == "new_child"
+    assert life_event_data["confidence"] == 0.9
+    assert "detected_at" in life_event_data
+
+    proposal_data = items[2]["data"]
+    assert proposal_data["title"] == "Proposal title"
+    assert proposal_data["status"] == "pending"
+    assert proposal_data["decided_at"] is None
+
+    nudge_data = items[3]["data"]
+    assert nudge_data["title"] == "Nudge title"
+    assert nudge_data["status"] == "sent"
+
+    notification_data = items[4]["data"]
+    assert notification_data["kind"] == "offer"
+    assert notification_data["title"] == "Offer notif"
+
+
+async def test_customer_timeline_limit_applied_after_merge(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    """A cross-type `limit` cut proves the merge happens before the limit is
+    applied - naively limiting each source first and concatenating would still
+    pass `test_customer_timeline_merges_all_types_sorted_desc` (only 1 row per
+    source there) but would fail this: the 3 newest rows here span 3 different
+    source types, so a per-source-only limit could accidentally keep a stale
+    older row from one type instead of a newer row from another."""
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    _u, customer = await make_customer(email="timelinelimitcust@example.com")
+    now = datetime.now(UTC)
+    await _seed_one_of_each_timeline_type(db, customer, now)
+
+    resp = await client.get(
+        f"/api/v1/console/customers/{customer.id}/timeline",
+        params={"limit": 3},
+        cookies=auth_cookies(staff_user),
+    )
+    assert resp.status_code == 200
+    items = resp.json()
+    assert [item["type"] for item in items] == ["agent_run", "life_event", "proposal"]

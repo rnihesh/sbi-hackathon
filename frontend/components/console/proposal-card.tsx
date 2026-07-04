@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { springSoft } from "@/lib/motion"
 import { formatRelativeTime, humanizeIdentifier } from "@/lib/format"
 import type { Proposal } from "@/lib/console-types"
+import { CustomerLink } from "@/components/console/customer-link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -67,7 +68,8 @@ export function ProposalCard({
           <div>
             <p className="text-sm font-medium">{proposal.title}</p>
             <p className="text-sm text-muted-foreground">
-              For {proposal.customer.full_name} &middot; {proposal.body}
+              For <CustomerLink id={proposal.customer.id}>{proposal.customer.full_name}</CustomerLink>
+              {" "}&middot; {proposal.body}
             </p>
           </div>
 

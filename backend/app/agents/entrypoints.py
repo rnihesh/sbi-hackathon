@@ -301,6 +301,7 @@ async def run_event_trigger(
     event_summary: str,
     *,
     event: dict[str, Any] | None = None,
+    trigger: AgentTriggerType = AgentTriggerType.EVENT,
 ) -> AgentRunResult:
     """Run the agent mesh for a system event (Redis consumer path).
 
@@ -309,6 +310,14 @@ async def run_event_trigger(
     must never drain the tiny org spend cap unattended. The consumer catches this
     and skips the run cleanly (no dead-letter). Chat never calls this guard, so
     user-facing traffic is unaffected.
+
+    ``trigger`` sets the ``agent_runs.trigger`` provenance label only; it defaults
+    to ``EVENT`` so the Redis consumer path is unchanged. The proactive scheduler
+    (:mod:`app.workers.scheduler`) passes ``SCHEDULED`` so its sweeps are
+    distinguishable in traces. The in-graph routing stays the event path either
+    way (the state ``trigger`` below is always ``"event"``), so a sweep runs the
+    same deterministic adoption logic as an organic event - it can only propose to
+    the HITL queue, never auto-send email.
     """
     router = get_router()
     await router.raise_if_over_budget()
@@ -316,7 +325,7 @@ async def run_event_trigger(
     sm = get_sessionmaker()
     cid = _uuid_or_none(customer_id)
 
-    tracer = RunTracer(sm, agent="supervisor", trigger=AgentTriggerType.EVENT, customer_id=cid)
+    tracer = RunTracer(sm, agent="supervisor", trigger=trigger, customer_id=cid)
     await tracer.start()
     thread_id = f"event-{tracer.run_id}"
     payload = {"summary": event_summary, **(event or {})}
