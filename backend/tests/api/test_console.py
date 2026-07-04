@@ -409,6 +409,136 @@ async def test_sim_inject_event_publishes_to_txn_events(
     assert after > before
 
 
+async def test_search_customers_requires_staff(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(email="search-non-staff@example.com")
+    resp = await client.get("/api/v1/console/customers", cookies=auth_cookies(user))
+    assert resp.status_code == 403
+
+
+async def test_search_customers_filters_by_name(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    await make_customer(email="alice@example.com", full_name="Alice Sharma")
+    await make_customer(email="bob@example.com", full_name="Bob Verma")
+
+    resp = await client.get(
+        "/api/v1/console/customers", params={"q": "ali"}, cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert [r["full_name"] for r in rows] == ["Alice Sharma"]
+    assert set(rows[0].keys()) == {"id", "full_name", "city"}
+
+
+async def test_search_customers_no_query_returns_recent_up_to_limit(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    for i in range(3):
+        await make_customer(email=f"cust{i}@example.com", full_name=f"Customer {i}")
+
+    resp = await client.get(
+        "/api/v1/console/customers", params={"limit": 2}, cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+async def test_health_requires_staff(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(email="health-non-staff@example.com")
+    resp = await client.get("/api/v1/console/health", cookies=auth_cookies(user))
+    assert resp.status_code == 403
+
+
+async def test_health_no_worker_ever_started(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    resp = await client.get("/api/v1/console/health", cookies=auth_cookies(staff_user))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["api"] == "ok"
+    assert body["worker"] == {
+        "alive": False, "last_event_at": None, "pending": 0, "dlq": 0,
+    }
+
+
+async def test_health_reports_alive_worker_from_consumer_group(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    from app.core.redis import GROUP_AGENTS, TXN_EVENTS
+
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    redis = get_redis()
+    await redis.xadd(TXN_EVENTS, {"data": "{}"})
+    await redis.xgroup_create(TXN_EVENTS, GROUP_AGENTS, id="0")
+    await redis.xreadgroup(GROUP_AGENTS, "consumer-1", {TXN_EVENTS: ">"}, count=10)
+
+    resp = await client.get("/api/v1/console/health", cookies=auth_cookies(staff_user))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["worker"]["alive"] is True
+    assert body["worker"]["last_event_at"] is not None
+    assert body["worker"]["pending"] == 1
+
+
+async def test_health_alive_false_when_consumer_idle_exceeds_threshold(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.redis import GROUP_AGENTS, TXN_EVENTS
+
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    redis = get_redis()
+    await redis.xadd(TXN_EVENTS, {"data": "{}"})
+    await redis.xgroup_create(TXN_EVENTS, GROUP_AGENTS, id="0")
+    await redis.xreadgroup(GROUP_AGENTS, "consumer-1", {TXN_EVENTS: ">"}, count=10)
+
+    # The consumer's `idle` is genuinely ~0ms right after the read above; force
+    # the "still counts as alive" threshold below that so the comparison branch
+    # that flags a stalled worker is exercised without a real-time sleep.
+    import app.api.v1.console as console_module
+
+    monkeypatch.setattr(console_module, "_WORKER_ALIVE_IDLE_MS", -1)
+
+    resp = await client.get("/api/v1/console/health", cookies=auth_cookies(staff_user))
+    assert resp.status_code == 200
+    assert resp.json()["worker"]["alive"] is False
+
+
+async def test_health_reports_dlq_count(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    from app.core.redis import TXN_EVENTS_DLQ
+
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    redis = get_redis()
+    await redis.xadd(TXN_EVENTS_DLQ, {"data": "{}", "error": "boom"})
+
+    resp = await client.get("/api/v1/console/health", cookies=auth_cookies(staff_user))
+    assert resp.status_code == 200
+    assert resp.json()["worker"]["dlq"] == 1
+
+
 async def test_feed_requires_staff(
     client: httpx.AsyncClient, make_customer: Callable[..., Any]
 ) -> None:

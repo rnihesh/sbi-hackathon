@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ConsoleMobileNav } from "@/components/console/console-mobile-nav"
+import { WorkerHealthIndicator } from "@/components/console/worker-health-indicator"
 import { CONSOLE_NAV_ITEMS } from "@/components/console/nav-items"
 
 function initialsFor(name: string): string {
@@ -51,6 +52,7 @@ export function ConsoleTopbar() {
       </div>
 
       <div className="flex items-center gap-2">
+        <WorkerHealthIndicator />
         <ThemeToggle />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

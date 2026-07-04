@@ -6,16 +6,41 @@ import { CheckCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError } from "@/lib/api"
-import type { Proposal } from "@/lib/console-types"
+import type { Proposal, ProposalActionResult } from "@/lib/console-types"
 import { ConsolePageHeader } from "@/components/console/page-header"
 import { ListRowSkeleton } from "@/components/console/list-row-skeleton"
 import { ProposalCard } from "@/components/console/proposal-card"
 import { Card, CardContent } from "@/components/ui/card"
 
+/** Turns the approve response's `action_kind`/`status`/`detail` into a plain
+ * sentence for the success toast - "email sent to ..." vs "nudge created" -
+ * so the reviewer knows what actually executed, not just that it did. */
+function describeApprovalResult(result: ProposalActionResult): string {
+  if (result.status === "skipped_no_creds") {
+    const reason = typeof result.detail.reason === "string" ? result.detail.reason : undefined
+    return reason ? `Email not sent - ${reason}` : "Email not sent - credentials not configured"
+  }
+  if (result.action_kind === "send_email" || result.action_kind === "email") {
+    const to = typeof result.detail.to === "string" ? result.detail.to : undefined
+    return to ? `Email sent to ${to}` : "Email sent"
+  }
+  if (result.action_kind === "send_nudge" || result.action_kind === "nudge") {
+    return "Nudge created for the customer"
+  }
+  if (result.action_kind === "product_offer" || result.action_kind === "offer") {
+    return "Product-offer nudge created for the customer"
+  }
+  return `${result.action_kind.replace(/_/g, " ")}: ${result.status}`
+}
+
 export default function ApprovalsPage() {
   const [proposals, setProposals] = React.useState<Proposal[] | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [busyIds, setBusyIds] = React.useState<Set<string>>(new Set())
+  // Synchronous guard against a double-fire that races ahead of the `busy`
+  // state's re-render (the `disabled` prop below already covers the common
+  // case once React has re-rendered, but a ref check is immediate).
+  const busyRef = React.useRef<Set<string>>(new Set())
 
   React.useEffect(() => {
     let cancelled = false
@@ -44,18 +69,24 @@ export default function ApprovalsPage() {
   }
 
   async function handleApprove(id: string) {
+    if (busyRef.current.has(id)) return
+    busyRef.current.add(id)
     setBusy(id, true)
     try {
-      await api.post(`${API_V1}/console/proposals/${id}/approve`)
+      const result = await api.post<ProposalActionResult>(`${API_V1}/console/proposals/${id}/approve`)
       setProposals((prev) => prev?.filter((p) => p.id !== id) ?? null)
-      toast.success("Proposal approved")
+      toast.success("Proposal approved", { description: describeApprovalResult(result) })
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't approve that proposal")
+    } finally {
+      busyRef.current.delete(id)
       setBusy(id, false)
     }
   }
 
   async function handleReject(id: string, reason?: string) {
+    if (busyRef.current.has(id)) return
+    busyRef.current.add(id)
     setBusy(id, true)
     try {
       await api.post(`${API_V1}/console/proposals/${id}/reject`, reason ? { reason } : undefined)
@@ -63,6 +94,8 @@ export default function ApprovalsPage() {
       toast.success("Proposal rejected")
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't reject that proposal")
+    } finally {
+      busyRef.current.delete(id)
       setBusy(id, false)
     }
   }

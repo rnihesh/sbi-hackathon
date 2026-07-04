@@ -6,6 +6,7 @@ import { api, API_V1, ApiError } from "@/lib/api"
 import { normalizeLifeEvent } from "@/lib/console-types"
 import type { LifeEventItem } from "@/lib/console-types"
 import { ConsolePageHeader } from "@/components/console/page-header"
+import { InjectEventDialog } from "@/components/console/inject-event-dialog"
 import { LifeEventRow } from "@/components/console/life-event-row"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -35,10 +36,13 @@ export default function LifeEventsPage() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <ConsolePageHeader
-        title="Life Events"
-        description="Job changes, new children, home intent - detected as they happen."
-      />
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <ConsolePageHeader
+          title="Life Events"
+          description="Job changes, new children, home intent - detected as they happen."
+        />
+        <InjectEventDialog />
+      </div>
 
       {error && (
         <Card className="mb-4">

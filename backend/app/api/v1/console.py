@@ -29,7 +29,13 @@ from app.agents.guardrails import AuditTrail
 from app.core.config import get_settings, is_staff_email
 from app.core.db import get_db
 from app.core.logging import get_logger
-from app.core.redis import AGENT_ACTIONS, TXN_EVENTS, get_redis
+from app.core.redis import (
+    AGENT_ACTIONS,
+    GROUP_AGENTS,
+    TXN_EVENTS,
+    TXN_EVENTS_DLQ,
+    get_redis,
+)
 from app.core.security import get_current_user
 from app.models.audit import AuditLog
 from app.models.banking import Account
@@ -48,9 +54,11 @@ from app.models.identity import User
 from app.models.tracing import AgentRun, AgentStep, LlmCall
 from app.schemas.console import (
     AcquisitionFunnel,
+    ConsoleHealthResponse,
     CostBreakdownRow,
     CostSeriesPoint,
     CostsResponse,
+    CustomerSearchOut,
     FunnelResponse,
     HoldingCategoryFunnel,
     LeadCustomerOut,
@@ -68,6 +76,7 @@ from app.schemas.console import (
     TraceDetailResponse,
     TraceOut,
     TraceStepOut,
+    WorkerHealthOut,
 )
 from app.services.email import EmailNotConfigured
 from app.sim import events as sim_events
@@ -97,6 +106,80 @@ async def get_current_staff(user: Annotated[User, Depends(get_current_user)]) ->
 
 
 StaffUser = Annotated[User, Depends(get_current_staff)]
+
+
+# ===========================================================================
+# Customer search (staff picker - e.g. the sim life-event injector dialog)
+# ===========================================================================
+
+
+@router.get("/customers", response_model=list[CustomerSearchOut])
+async def search_customers(
+    staff: StaffUser,
+    q: str | None = Query(default=None, description="Case-insensitive full_name substring"),
+    limit: int = Query(default=20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+) -> list[CustomerSearchOut]:
+    stmt = select(Customer.id, Customer.full_name, Customer.city).order_by(Customer.full_name)
+    if q:
+        stmt = stmt.where(Customer.full_name.ilike(f"%{q}%"))
+    stmt = stmt.limit(limit)
+    rows = (await db.execute(stmt)).all()
+    return [
+        CustomerSearchOut(id=row.id, full_name=row.full_name, city=row.city) for row in rows
+    ]
+
+
+# ===========================================================================
+# Health (worker liveness, for the console topbar status chip)
+# ===========================================================================
+
+_WORKER_ALIVE_IDLE_MS = 30_000
+"""Max consumer idle time (`XINFO CONSUMERS`' ``idle``, which resets on every
+``XREADGROUP``/``XAUTOCLAIM`` call the consumer makes regardless of whether new
+entries were returned) before the worker is considered dead. ``event_consumer``'s
+loop blocks up to ``BLOCK_MS`` (5s) per read then immediately reclaims stale
+entries, so a live worker's idle time never climbs far past that; 30s tolerates
+a slow GC pause or two without false-flagging a healthy worker as down."""
+
+
+async def _worker_health(redis: Any) -> WorkerHealthOut:
+    pending = 0
+    last_event_at: datetime | None = None
+    alive = False
+    try:
+        groups = await redis.xinfo_groups(TXN_EVENTS)
+    except Exception:
+        groups = []  # stream doesn't exist yet - worker has never run
+    group = next((g for g in groups if g.get("name") == GROUP_AGENTS), None)
+    if group is not None:
+        pending = int(group.get("pending", 0))
+        last_id = str(group.get("last-delivered-id") or "0-0")
+        if last_id != "0-0":
+            last_event_at = datetime.fromtimestamp(int(last_id.split("-")[0]) / 1000, tz=UTC)
+        try:
+            consumers = await redis.xinfo_consumers(TXN_EVENTS, GROUP_AGENTS)
+        except Exception:
+            consumers = []
+        alive = any(int(c.get("idle", 10**12)) < _WORKER_ALIVE_IDLE_MS for c in consumers)
+    try:
+        dlq = int(await redis.xlen(TXN_EVENTS_DLQ))
+    except Exception:
+        dlq = 0
+    return WorkerHealthOut(alive=alive, last_event_at=last_event_at, pending=pending, dlq=dlq)
+
+
+@router.get("/health", response_model=ConsoleHealthResponse)
+async def console_health(
+    staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> ConsoleHealthResponse:
+    try:
+        await db.execute(select(1))
+        api_status = "ok"
+    except Exception:
+        api_status = "degraded"
+    worker = await _worker_health(get_redis())
+    return ConsoleHealthResponse(worker=worker, api=api_status)
 
 
 # ===========================================================================

@@ -1,8 +1,9 @@
 "use client"
 
 import * as React from "react"
+import { Suspense } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { motion } from "framer-motion"
 import { Waypoints } from "lucide-react"
 
@@ -26,11 +27,39 @@ const TRIGGER_FILTERS = [
 
 type TriggerFilter = (typeof TRIGGER_FILTERS)[number]["value"]
 
+function parseTriggerFilter(value: string | null): TriggerFilter {
+  return value === "chat" || value === "event" ? value : "all"
+}
+
 export default function TracesPage() {
+  // `useSearchParams` requires an enclosing Suspense boundary (see
+  // `components/auth/sign-in-sheet-context.tsx` for the same pattern) - the
+  // fallback mirrors the loaded page's shell so there's no layout shift.
+  return (
+    <Suspense fallback={<TracesPageFallback />}>
+      <TracesPageContent />
+    </Suspense>
+  )
+}
+
+function TracesPageContent() {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [traces, setTraces] = React.useState<TraceSummary[] | null>(null)
   const [error, setError] = React.useState<string | null>(null)
-  const [filter, setFilter] = React.useState<TriggerFilter>("all")
+  const [filter, setFilter] = React.useState<TriggerFilter>(() =>
+    parseTriggerFilter(searchParams.get("trigger"))
+  )
+
+  function updateFilter(next: TriggerFilter) {
+    setFilter(next)
+    const params = new URLSearchParams(searchParams.toString())
+    if (next === "all") params.delete("trigger")
+    else params.set("trigger", next)
+    const query = params.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }
 
   React.useEffect(() => {
     let cancelled = false
@@ -58,7 +87,7 @@ export default function TracesPage() {
           title="Traces"
           description="Every agent run - node, tool, model, tokens, latency, cost."
         />
-        <Tabs value={filter} onValueChange={(v) => setFilter(v as TriggerFilter)}>
+        <Tabs value={filter} onValueChange={(v) => updateFilter(v as TriggerFilter)}>
           <TabsList>
             {TRIGGER_FILTERS.map((f) => (
               <TabsTrigger key={f.value} value={f.value}>
@@ -188,6 +217,31 @@ export default function TracesPage() {
           </div>
         </motion.div>
       )}
+    </div>
+  )
+}
+
+/** Mirrors `TracesPageContent`'s loaded shell so the Suspense boundary above it
+ * never causes a visible layout jump. */
+function TracesPageFallback() {
+  return (
+    <div className="mx-auto max-w-5xl">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <ConsolePageHeader
+          title="Traces"
+          description="Every agent run - node, tool, model, tokens, latency, cost."
+        />
+        <Tabs value="all">
+          <TabsList>
+            {TRIGGER_FILTERS.map((f) => (
+              <TabsTrigger key={f.value} value={f.value} disabled>
+                {f.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+      <ListRowSkeleton count={6} />
     </div>
   )
 }
