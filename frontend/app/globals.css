@@ -148,6 +148,24 @@
   label[for] {
     cursor: pointer;
   }
+  /* Tailwind's backdrop-blur utilities only emit the unprefixed
+     `backdrop-filter` property. Safari < 18 (still common on iOS) needs the
+     -webkit- prefix to render the blur at all; without it these elements
+     silently fall back to a flat background with no blur. Mirrors the same
+     --tw-backdrop-* custom properties Tailwind already sets, so it covers
+     every backdrop-blur-* size used across the app (topbars, sheets, tab
+     bar). */
+  .backdrop-blur,
+  .backdrop-blur-xs,
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl {
+    -webkit-backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, )
+      var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, )
+      var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, )
+      var(--tw-backdrop-sepia, );
+  }
 }
 
 /* Numbers, ids, code always render in Geist Mono */

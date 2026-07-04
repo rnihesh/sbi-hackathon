@@ -483,8 +483,9 @@ export default function ChatPage() {
               {SUGGESTIONS.map((suggestion) => (
                 <button
                   key={suggestion}
+                  type="button"
                   onClick={() => handleSend(suggestion)}
-                  className="rounded-full border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  className="rounded-full border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {suggestion}
                 </button>

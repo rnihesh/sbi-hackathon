@@ -34,7 +34,7 @@ export function JsonDisclosure({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        className="flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
         {open ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}

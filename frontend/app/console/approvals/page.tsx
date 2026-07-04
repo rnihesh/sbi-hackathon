@@ -18,19 +18,19 @@ import { Card, CardContent } from "@/components/ui/card"
 function describeApprovalResult(result: ProposalActionResult): string {
   if (result.status === "skipped_no_creds") {
     const reason = typeof result.detail.reason === "string" ? result.detail.reason : undefined
-    return reason ? `Email not sent - ${reason}` : "Email not sent - credentials not configured"
+    return reason ? `Email not sent - ${reason}.` : "Email not sent - credentials not configured."
   }
   if (result.action_kind === "send_email" || result.action_kind === "email") {
     const to = typeof result.detail.to === "string" ? result.detail.to : undefined
-    return to ? `Email sent to ${to}` : "Email sent"
+    return to ? `Email sent to ${to}.` : "Email sent."
   }
   if (result.action_kind === "send_nudge" || result.action_kind === "nudge") {
-    return "Nudge created for the customer"
+    return "Nudge created for the customer."
   }
   if (result.action_kind === "product_offer" || result.action_kind === "offer") {
-    return "Product-offer nudge created for the customer"
+    return "Product-offer nudge created for the customer."
   }
-  return `${result.action_kind.replace(/_/g, " ")}: ${result.status}`
+  return `${result.action_kind.replace(/_/g, " ")}: ${result.status}.`
 }
 
 export default function ApprovalsPage() {

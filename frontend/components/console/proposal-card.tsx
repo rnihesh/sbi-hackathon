@@ -36,6 +36,11 @@ export function ProposalCard({
   const [expanded, setExpanded] = React.useState(false)
   const [rejectOpen, setRejectOpen] = React.useState(false)
   const [reason, setReason] = React.useState("")
+  // The reject dialog opens from a plain button, not a `DialogTrigger`, so
+  // Radix has no trigger ref of its own to restore focus to on close (it'd
+  // otherwise fall back to `<body>` - verified live on the sign-in sheet,
+  // same underlying gap). Track it directly instead.
+  const rejectTriggerRef = React.useRef<HTMLButtonElement>(null)
 
   return (
     <motion.div
@@ -70,7 +75,7 @@ export function ProposalCard({
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+              className="flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <ChevronDown className={cn("size-3.5 transition-transform", expanded && "rotate-180")} />
               {expanded ? "Hide action payload" : "Show action payload"}
@@ -83,7 +88,13 @@ export function ProposalCard({
           </div>
 
           <div className="flex gap-2 pt-1">
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => setRejectOpen(true)}>
+            <Button
+              ref={rejectTriggerRef}
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => setRejectOpen(true)}
+            >
               Reject
             </Button>
             <Button size="sm" disabled={busy} onClick={() => onApprove(proposal.id)}>
@@ -94,7 +105,12 @@ export function ProposalCard({
       </Card>
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(e) => {
+            e.preventDefault()
+            rejectTriggerRef.current?.focus()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Reject proposal</DialogTitle>
             <DialogDescription>

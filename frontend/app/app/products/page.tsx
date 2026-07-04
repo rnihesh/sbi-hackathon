@@ -19,6 +19,7 @@ import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { humanizeIdentifier } from "@/lib/format"
 import { staggerContainer, staggerItem } from "@/lib/motion"
+import { useFocusReturn } from "@/lib/use-focus-return"
 import type {
   ProductApplyResponse,
   ProductBrowseItem,
@@ -67,6 +68,7 @@ export default function ProductsPage() {
   const [justRequested, setJustRequested] = React.useState<Set<string>>(new Set())
   const [busyCode, setBusyCode] = React.useState<string | null>(null)
   const [confirmItem, setConfirmItem] = React.useState<ProductBrowseItem | null>(null)
+  const { captureFocus, onCloseAutoFocus } = useFocusReturn()
 
   const load = React.useCallback(async () => {
     try {
@@ -157,7 +159,10 @@ export default function ProductsPage() {
                     item={item}
                     requested={item.pending || justRequested.has(item.code)}
                     busy={busyCode === item.code}
-                    onApply={() => setConfirmItem(item)}
+                    onApply={() => {
+                      captureFocus()
+                      setConfirmItem(item)
+                    }}
                   />
                 ))}
               </div>
@@ -167,7 +172,7 @@ export default function ProductsPage() {
       ) : null}
 
       <Dialog open={confirmItem !== null} onOpenChange={(open) => !open && setConfirmItem(null)}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
           <DialogHeader>
             <DialogTitle>Request {confirmItem?.name}</DialogTitle>
             <DialogDescription>

@@ -68,12 +68,14 @@ export default function LeadsPage() {
               <Card key={lead.id}>
                 <CardContent className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium">{lead.name ?? "Unnamed lead"}</span>
-                    <Badge variant={stageBadgeVariant(lead.stage)} className="capitalize">
+                    <span className="min-w-0 truncate text-sm font-medium">
+                      {lead.name ?? "Unnamed lead"}
+                    </span>
+                    <Badge variant={stageBadgeVariant(lead.stage)} className="shrink-0 capitalize">
                       {humanizeIdentifier(lead.stage)}
                     </Badge>
                   </div>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="block truncate text-xs text-muted-foreground">
                     {lead.email ?? lead.phone ?? "No contact on file"} &middot; via {lead.source}
                   </span>
                   <IntentScoreBar score={lead.intent_score} />

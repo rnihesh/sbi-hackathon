@@ -107,7 +107,7 @@ function MessageBubbleImpl({ message, onRetry, onOfferCta, conversationId }: Mes
               <button
                 type="button"
                 onClick={onRetry}
-                className="inline-flex items-center gap-1 font-medium underline-offset-2 hover:underline"
+                className="inline-flex items-center gap-1 rounded-sm font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <RotateCw className="size-3" />
                 Retry

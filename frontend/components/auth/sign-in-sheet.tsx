@@ -35,9 +35,15 @@ type LoadingKind = "google" | "passkey" | "otp-send" | "otp-verify" | null
 export function SignInSheet({
   open,
   onOpenChange,
+  lastActiveRef,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Element focused right before the sheet opened (see
+   * `sign-in-sheet-context.tsx`) - restored on close since none of this
+   * sheet's triggers go through `SheetTrigger`, so Radix has nothing of its
+   * own to return focus to. */
+  lastActiveRef?: React.RefObject<HTMLElement | null>
 }) {
   const router = useRouter()
   const { setMe } = useMe()
@@ -132,7 +138,16 @@ export function SignInSheet({
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
-      <SheetContent className="flex flex-col gap-0 sm:max-w-md">
+      <SheetContent
+        className="flex flex-col gap-0 sm:max-w-md"
+        onCloseAutoFocus={(e) => {
+          const target = lastActiveRef?.current
+          if (target && target !== document.body && document.contains(target)) {
+            e.preventDefault()
+            target.focus()
+          }
+        }}
+      >
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <SarathiMark className="text-primary" />
@@ -223,7 +238,7 @@ export function SignInSheet({
                     Sent to {email}.{" "}
                     <button
                       type="button"
-                      className="font-medium text-foreground underline underline-offset-2"
+                      className="rounded-sm font-medium text-foreground underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => {
                         setStep("start")
                         setCode("")

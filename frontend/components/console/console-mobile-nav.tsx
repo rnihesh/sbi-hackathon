@@ -45,7 +45,7 @@ export function ConsoleMobileNav() {
                 href={item.href}
                 onClick={() => setOpen(false)}
                 className={cn(
-                  "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-[transform,color,background-color] duration-150 active:scale-[0.97]",
+                  "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-[transform,color,background-color] duration-150 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   isActive
                     ? "bg-accent text-accent-foreground"
                     : "text-foreground/70 hover:bg-secondary/70 hover:text-foreground"

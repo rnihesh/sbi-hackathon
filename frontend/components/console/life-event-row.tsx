@@ -51,7 +51,7 @@ export function LifeEventRow({ event }: { event: LifeEventItem }) {
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+              className="mt-1 flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <ChevronDown className={cn("size-3.5 transition-transform", expanded && "rotate-180")} />
               {expanded ? "Hide evidence" : "Show evidence"}

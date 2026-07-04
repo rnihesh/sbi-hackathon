@@ -60,6 +60,10 @@ const SEARCH_DEBOUNCE_MS = 250
 
 export function InjectEventDialog() {
   const [open, setOpen] = React.useState(false)
+  // Opened from a plain button, not a `DialogTrigger`, so Radix has no
+  // trigger ref to restore focus to on close (falls back to `<body>` -
+  // verified live on the sign-in sheet, same gap). Track it directly.
+  const triggerRef = React.useRef<HTMLButtonElement>(null)
   const [customerPickerOpen, setCustomerPickerOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
   const [options, setOptions] = React.useState<CustomerSearchResult[]>([])
@@ -132,12 +136,18 @@ export function InjectEventDialog() {
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <Button ref={triggerRef} size="sm" onClick={() => setOpen(true)}>
         <Sparkles /> Inject event
       </Button>
 
       <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : resetAndClose())}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent
+          className="sm:max-w-lg"
+          onCloseAutoFocus={(e) => {
+            e.preventDefault()
+            triggerRef.current?.focus()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Inject a sim life event</DialogTitle>
             <DialogDescription>
@@ -199,7 +209,7 @@ export function InjectEventDialog() {
                             setCustomerPickerOpen(false)
                           }}
                           className={cn(
-                            "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
+                            "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             customer?.id === opt.id && "bg-muted"
                           )}
                         >
@@ -226,7 +236,7 @@ export function InjectEventDialog() {
                     onClick={() => setEventType(et.value)}
                     aria-pressed={eventType === et.value}
                     className={cn(
-                      "flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-muted",
+                      "flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       eventType === et.value && "border-primary bg-accent/10 hover:bg-accent/10"
                     )}
                   >

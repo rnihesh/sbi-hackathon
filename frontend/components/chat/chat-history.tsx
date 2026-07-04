@@ -109,6 +109,12 @@ function ConversationRow({
   const [draft, setDraft] = React.useState(session.title)
   const [confirmOpen, setConfirmOpen] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
+  // The confirm dialog is opened from a `DropdownMenuItem`, not a static
+  // `DialogTrigger`, so Radix has nothing of its own to refocus on close -
+  // it'd otherwise fall back to `<body>`. Return focus to the row's kebab
+  // button instead (already the sensible landing spot, and where the
+  // dropdown itself returns focus to once it closes).
+  const kebabTriggerRef = React.useRef<HTMLButtonElement>(null)
 
   function startRename() {
     setDraft(session.title)
@@ -171,8 +177,9 @@ function ConversationRow({
       )}
     >
       <button
+        type="button"
         onClick={() => onOpen(session)}
-        className="flex min-w-0 flex-1 items-start gap-2.5 rounded-lg px-2.5 py-2 text-left"
+        className="flex min-w-0 flex-1 items-start gap-2.5 rounded-lg px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <MessageSquare className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1">
@@ -190,6 +197,7 @@ function ConversationRow({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
+            ref={kebabTriggerRef}
             variant="ghost"
             size="icon"
             aria-label="Conversation actions"
@@ -214,7 +222,13 @@ function ConversationRow({
       </DropdownMenu>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent
+          className="max-w-sm"
+          onCloseAutoFocus={(e) => {
+            e.preventDefault()
+            kebabTriggerRef.current?.focus()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Delete conversation?</DialogTitle>
             <DialogDescription>

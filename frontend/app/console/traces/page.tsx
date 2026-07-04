@@ -132,7 +132,7 @@ function TracesPageContent() {
                         </div>
                         <TraceStatusBadge status={trace.status} />
                       </div>
-                      <p className="text-sm font-medium">
+                      <p className="truncate text-sm font-medium">
                         {trace.customer?.full_name ?? "No customer"}
                       </p>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums text-muted-foreground">

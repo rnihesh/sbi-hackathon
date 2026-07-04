@@ -49,6 +49,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
+import { useFocusReturn } from "@/lib/use-focus-return"
 
 interface PasskeyRegisterCompleteResponse {
   credential_id: string
@@ -135,6 +136,7 @@ export default function ProfilePage() {
   const [addingPasskey, setAddingPasskey] = React.useState(false)
   const [passkeys, setPasskeys] = React.useState<PasskeyCredential[] | null>(null)
   const [pendingRemoval, setPendingRemoval] = React.useState<PasskeyCredential | null>(null)
+  const { captureFocus, onCloseAutoFocus } = useFocusReturn()
   const [removingPasskey, setRemovingPasskey] = React.useState(false)
   const [languagePending, setLanguagePending] = React.useState(false)
   const [editingField, setEditingField] = React.useState<EditableField | null>(null)
@@ -516,7 +518,10 @@ export default function ProfilePage() {
                             variant="ghost"
                             size="icon-sm"
                             aria-label={`Remove ${passkey.label}`}
-                            onClick={() => setPendingRemoval(passkey)}
+                            onClick={() => {
+                              captureFocus()
+                              setPendingRemoval(passkey)
+                            }}
                           >
                             <X className="size-3.5" />
                           </Button>
@@ -612,7 +617,7 @@ export default function ProfilePage() {
           if (!open) setPendingRemoval(null)
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
           <DialogHeader>
             <DialogTitle>Remove passkey</DialogTitle>
             <DialogDescription>

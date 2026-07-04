@@ -123,7 +123,7 @@ function WalkthroughCard({
                   type="button"
                   onClick={() => toggle(index)}
                   aria-pressed={done}
-                  className="flex w-full items-start gap-2.5 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-muted/60"
+                  className="flex w-full items-start gap-2.5 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span
                     className={cn(

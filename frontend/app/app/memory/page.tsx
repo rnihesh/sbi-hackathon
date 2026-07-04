@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useFocusReturn } from "@/lib/use-focus-return"
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "ghost" | "link"
 
@@ -111,6 +112,7 @@ export default function MemoryPage() {
   const [forgettingOne, setForgettingOne] = React.useState(false)
   const [confirmForgetAll, setConfirmForgetAll] = React.useState(false)
   const [forgettingAll, setForgettingAll] = React.useState(false)
+  const { captureFocus, onCloseAutoFocus } = useFocusReturn()
 
   const load = React.useCallback(async (showSkeleton: boolean) => {
     if (showSkeleton) setLoading(true)
@@ -288,7 +290,10 @@ export default function MemoryPage() {
                                       variant="ghost"
                                       size="icon-sm"
                                       aria-label="Forget this memory"
-                                      onClick={() => setPendingForget(item)}
+                                      onClick={() => {
+                                        captureFocus()
+                                        setPendingForget(item)
+                                      }}
                                     >
                                       <X className="size-3.5" />
                                     </Button>
@@ -306,7 +311,10 @@ export default function MemoryPage() {
                   <Button
                     variant="outline"
                     className="mt-1 gap-1.5 self-start text-destructive hover:text-destructive"
-                    onClick={() => setConfirmForgetAll(true)}
+                    onClick={() => {
+                      captureFocus()
+                      setConfirmForgetAll(true)
+                    }}
                   >
                     <Trash2 className="size-4" />
                     Forget everything
@@ -332,7 +340,7 @@ export default function MemoryPage() {
           if (!open) setPendingForget(null)
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
           <DialogHeader>
             <DialogTitle>Forget this memory?</DialogTitle>
             <DialogDescription>
@@ -360,7 +368,7 @@ export default function MemoryPage() {
           if (!open) setConfirmForgetAll(false)
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
           <DialogHeader>
             <DialogTitle>Forget everything?</DialogTitle>
             <DialogDescription>
