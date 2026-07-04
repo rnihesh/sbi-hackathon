@@ -275,3 +275,74 @@ export interface CostsResponse {
   by_purpose: CostBreakdownRow[]
   last_24h: CostSeriesPoint[]
 }
+
+// ---------------------------------------------------------------------------
+// Analytics - mirrors `app.schemas.console.{DetectionResponse,DetectionRow,
+// DetectionSummary,TimeseriesResponse,TimeseriesPoint,ProposalOutcomesResponse,
+// ProposalAgentRow}` exactly. `cost_usd` figures are backend `Decimal`s, which
+// serialize as JSON strings - parse with `Number(...)` before formatting.
+// ---------------------------------------------------------------------------
+
+/** Mirrors `app.schemas.console.DetectionRow` (one injection vs. its detection). */
+export interface DetectionRow {
+  injection_id: string
+  customer_id: string
+  customer_name: string
+  injected_type: string
+  injected_at: string
+  expected_types: string[]
+  detected: boolean
+  detected_type: string | null
+  confidence: number | null
+  lag_seconds: number | null
+  matched: boolean
+}
+
+/** Mirrors `app.schemas.console.DetectionSummary`. */
+export interface DetectionSummary {
+  injected: number
+  detected: number
+  matched: number
+  detections_with_no_injection: number
+}
+
+/** Mirrors `app.schemas.console.DetectionResponse`. */
+export interface DetectionResponse {
+  summary: DetectionSummary
+  rows: DetectionRow[]
+}
+
+/** Mirrors `app.schemas.console.TimeseriesPoint`. */
+export interface TimeseriesPoint {
+  date: string
+  agent_runs: number
+  proposals_created: number
+  proposals_approved: number
+  nudges_sent: number
+  nudges_acted: number
+  llm_cost_usd: string
+}
+
+/** Mirrors `app.schemas.console.TimeseriesResponse`. */
+export interface TimeseriesResponse {
+  days: number
+  points: TimeseriesPoint[]
+}
+
+/** Mirrors `app.schemas.console.ProposalAgentRow`. */
+export interface ProposalAgentRow {
+  agent: string
+  created: number
+  approved: number
+  rejected: number
+}
+
+/** Mirrors `app.schemas.console.ProposalOutcomesResponse`. */
+export interface ProposalOutcomesResponse {
+  pending: number
+  approved: number
+  rejected: number
+  executed: number
+  avg_decision_seconds: number | null
+  by_agent: ProposalAgentRow[]
+}

@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 60.0
     llm_default_max_tokens: int = 1024
 
+    # Daily spend ceiling (USD, UTC day) enforced against a Redis spend counter.
+    # Event-triggered agent runs pause when the day's spend crosses this; chat
+    # (user-facing) is never blocked. The hackathon org has a tiny cap, so this
+    # keeps the automated event pipeline from ever draining it unattended.
+    llm_daily_budget_usd: float = 0.25
+
     # Purpose-based provider routing. Comma-separated "<key>=<provider>[:<model>]"
     # entries; a key matches when it equals any ':'-separated segment of a call's
     # ``purpose`` (so "classify" matches "supervisor:classify"). The matched provider

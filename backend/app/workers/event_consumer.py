@@ -44,6 +44,7 @@ from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.logging import get_logger, setup_logging
 from app.core.redis import GROUP_AGENTS, TXN_EVENTS, TXN_EVENTS_DLQ, get_redis
+from app.llm.budget import BudgetExceeded
 from app.models.customer import Customer
 from app.services import ledger
 from app.workers.activity import publish_run_result
@@ -165,6 +166,18 @@ async def _run_agent_guarded(
                         "transaction": dict(new_txn),
                     },
                 )
+        except BudgetExceeded as exc:
+            # Daily LLM budget reached: pause the automated pipeline gracefully.
+            # Skip this run WITHOUT dead-lettering - the transaction is already
+            # persisted, and once spend rolls over (or the budget is raised) the
+            # next matching event runs normally. Never poisons the DLQ.
+            logger.warning(
+                "event_agent_run_budget_paused",
+                customer_id=customer_id,
+                rule=match.rule,
+                error=str(exc),
+            )
+            return None
         except TimeoutError:
             logger.error(
                 "event_agent_run_timeout",

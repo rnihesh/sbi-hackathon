@@ -28,6 +28,7 @@ export interface CustomerOut {
   state: string | null
   segment: string | null
   digital_maturity: string
+  preferred_language: string | null
 }
 
 export interface MeResponse {

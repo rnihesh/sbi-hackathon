@@ -302,7 +302,17 @@ async def run_event_trigger(
     *,
     event: dict[str, Any] | None = None,
 ) -> AgentRunResult:
-    """Run the agent mesh for a system event (Redis consumer path)."""
+    """Run the agent mesh for a system event (Redis consumer path).
+
+    Pauses (raises :class:`~app.llm.budget.BudgetExceeded`) before doing any work
+    when today's LLM spend is over the daily budget - the automated event pipeline
+    must never drain the tiny org spend cap unattended. The consumer catches this
+    and skips the run cleanly (no dead-letter). Chat never calls this guard, so
+    user-facing traffic is unaffected.
+    """
+    router = get_router()
+    await router.raise_if_over_budget()
+
     sm = get_sessionmaker()
     cid = _uuid_or_none(customer_id)
 
@@ -317,7 +327,7 @@ async def run_event_trigger(
         ctx = AgentContext(
             session=session,
             sessionmaker=sm,
-            router=get_router(),
+            router=router,
             embedder=get_embedder(),
             tracer=tracer,
             emitter=None,

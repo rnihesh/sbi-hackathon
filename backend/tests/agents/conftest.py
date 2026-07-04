@@ -94,6 +94,10 @@ class FakeRouter:
             purpose=purpose, messages=messages, tools=tools, json_mode=json_mode, system=system
         )
 
+    async def raise_if_over_budget(self) -> None:
+        """No-op: the fake router has no budget guard (mirrors an unwired router)."""
+        return None
+
     async def stream_chat(
         self,
         *,

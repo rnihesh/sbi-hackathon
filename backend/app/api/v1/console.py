@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Annotated, Any
 
 import orjson
@@ -53,6 +54,7 @@ from app.models.enums import (
     ProposalStatus,
 )
 from app.models.identity import User
+from app.models.sim_injection import SimInjection
 from app.models.tracing import AgentRun, AgentStep, LlmCall
 from app.schemas.console import (
     AcquisitionFunnel,
@@ -62,6 +64,9 @@ from app.schemas.console import (
     CostSeriesPoint,
     CostsResponse,
     CustomerSearchOut,
+    DetectionResponse,
+    DetectionRow,
+    DetectionSummary,
     DlqEntrySummaryOut,
     ErrorLogEntryOut,
     FunnelResponse,
@@ -73,11 +78,15 @@ from app.schemas.console import (
     LlmBudgetOut,
     NudgeFunnel,
     ProposalActionResult,
+    ProposalAgentRow,
     ProposalCustomerOut,
     ProposalOut,
+    ProposalOutcomesResponse,
     ProposalRejectRequest,
     SimInjectEventRequest,
     SimInjectEventResponse,
+    TimeseriesPoint,
+    TimeseriesResponse,
     TraceCustomerOut,
     TraceDetailResponse,
     TraceOut,
@@ -205,7 +214,12 @@ async def _timed_redis_ping(redis: Any) -> float | None:
 
 
 async def _llm_budget_today(db: AsyncSession) -> LlmBudgetOut:
-    """Today's (UTC day) LLM call count + cost from the `llm_calls` ledger."""
+    """Today's (UTC day) LLM call count + cost from the `llm_calls` ledger, plus
+    the configured daily budget and whether spend has crossed it.
+
+    The ledger (Postgres) is the authoritative spend source here - the router's
+    Redis counter is the same figure maintained cheaply for the hot-path guard;
+    both derive from each call's `compute_cost`, so they agree."""
     day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     calls, cost = (
         await db.execute(
@@ -215,7 +229,14 @@ async def _llm_budget_today(db: AsyncSession) -> LlmBudgetOut:
             ).where(LlmCall.created_at >= day_start)
         )
     ).one()
-    return LlmBudgetOut(calls_today=int(calls or 0), cost_usd_today=cost)
+    budget = Decimal(str(get_settings().llm_daily_budget_usd))
+    cost_today = Decimal(cost or 0)
+    return LlmBudgetOut(
+        calls_today=int(calls or 0),
+        cost_usd_today=cost_today,
+        budget_usd=budget,
+        over_budget=budget > 0 and cost_today >= budget,
+    )
 
 
 async def _dlq_recent(redis: Any) -> list[DlqEntrySummaryOut]:
@@ -761,6 +782,246 @@ async def get_costs(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> Cos
 
 
 # ===========================================================================
+# Analytics: detection scorecard, funnel time series, proposal outcomes
+# ===========================================================================
+#
+# The jury-facing proof that the agent mesh actually works: ground-truth injected
+# events graded against what got detected, daily funnel/spend trends, and the HITL
+# proposal outcome mix. Everything reads real rows (agent_runs, life_events,
+# proposals, nudges, llm_calls, sim_injections); nothing here is synthesised.
+
+# Sim injected-type -> the `life_events.type` values that count as a correct
+# detection for it. An empty family means "no life-event detection is expected"
+# (churn is handled via nudges/proposals, not a life_event), so for those the
+# correct outcome is that NOTHING was detected.
+_DETECTION_FAMILY: dict[str, set[str]] = {
+    "home_purchase_intent": {"home_intent"},
+    "bonus_windfall": {"bonus", "salary_hike"},
+    "wedding": {"marriage"},
+    "job_change": {"job_change", "salary_hike"},
+    "new_child": {"new_child"},
+    "churn_risk": set(),
+}
+
+
+def _build_detection_row(
+    injection: SimInjection,
+    customer_name: str,
+    window_end: datetime | None,
+    events: list[LifeEvent],
+) -> tuple[DetectionRow, LifeEvent | None]:
+    """Pair one injection with the best detection inside its attribution window.
+
+    ``events`` is this customer's life events sorted by ``detected_at`` ascending.
+    The window is ``[injected_at, window_end)`` (``window_end`` is the customer's
+    next injection, or ``None`` for the latest). A same-family detection is
+    preferred over an earlier off-family one; the chosen event is returned so the
+    caller can mark it attributed (for the no-injection false-positive tally)."""
+    family = _DETECTION_FAMILY.get(injection.injected_type, set())
+    in_window = [
+        e
+        for e in events
+        if e.detected_at >= injection.injected_at
+        and (window_end is None or e.detected_at < window_end)
+    ]
+    family_hits = [e for e in in_window if e.type.value in family]
+    chosen = family_hits[0] if family_hits else (in_window[0] if in_window else None)
+
+    detected = chosen is not None
+    detected_type = chosen.type.value if chosen else None
+    confidence = chosen.confidence if chosen else None
+    lag_seconds = (
+        (chosen.detected_at - injection.injected_at).total_seconds() if chosen else None
+    )
+    matched = (detected and detected_type in family) if family else (not detected)
+
+    row = DetectionRow(
+        injection_id=injection.id,
+        customer_id=injection.customer_id,
+        customer_name=customer_name,
+        injected_type=injection.injected_type,
+        injected_at=injection.injected_at,
+        expected_types=sorted(family),
+        detected=detected,
+        detected_type=detected_type,
+        confidence=confidence,
+        lag_seconds=lag_seconds,
+        matched=matched,
+    )
+    return row, chosen
+
+
+@router.get("/analytics/detection", response_model=DetectionResponse)
+async def analytics_detection(
+    staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> DetectionResponse:
+    """Detection scorecard: each console-injected ground-truth event vs. the life
+    event the agent mesh actually detected (type match, confidence, and lag)."""
+    inj_rows = (
+        await db.execute(
+            select(SimInjection, Customer.full_name)
+            .join(Customer, SimInjection.customer_id == Customer.id)
+            .order_by(SimInjection.customer_id, SimInjection.injected_at)
+        )
+    ).all()
+
+    events = (
+        (await db.execute(select(LifeEvent).order_by(LifeEvent.detected_at))).scalars().all()
+    )
+    events_by_customer: dict[uuid.UUID, list[LifeEvent]] = {}
+    for event in events:
+        events_by_customer.setdefault(event.customer_id, []).append(event)
+
+    # Group injections per customer (already globally sorted by (customer, time)),
+    # so each injection's window ends at the same customer's next injection.
+    injections_by_customer: dict[uuid.UUID, list[tuple[SimInjection, str]]] = {}
+    for injection, name in inj_rows:
+        injections_by_customer.setdefault(injection.customer_id, []).append((injection, name))
+
+    rows: list[DetectionRow] = []
+    attributed_event_ids: set[uuid.UUID] = set()
+    for customer_id, entries in injections_by_customer.items():
+        customer_events = events_by_customer.get(customer_id, [])
+        for idx, (injection, name) in enumerate(entries):
+            window_end = entries[idx + 1][0].injected_at if idx + 1 < len(entries) else None
+            row, chosen = _build_detection_row(injection, name, window_end, customer_events)
+            rows.append(row)
+            if chosen is not None:
+                attributed_event_ids.add(chosen.id)
+
+    rows.sort(key=lambda r: r.injected_at, reverse=True)
+
+    # A detection with no injection: a life event that falls inside no injection
+    # window (e.g. detected before that customer's first injection, or for a
+    # customer that was never injected) - a rough unprompted / false-positive tally.
+    detections_with_no_injection = 0
+    for customer_id, customer_events in events_by_customer.items():
+        windows = [
+            (
+                entry[0].injected_at,
+                entries[i + 1][0].injected_at if i + 1 < len(entries) else None,
+            )
+            for entries in [injections_by_customer.get(customer_id, [])]
+            for i, entry in enumerate(entries)
+        ]
+        for event in customer_events:
+            attributed = any(
+                event.detected_at >= start and (end is None or event.detected_at < end)
+                for start, end in windows
+            )
+            if not attributed:
+                detections_with_no_injection += 1
+
+    summary = DetectionSummary(
+        injected=len(rows),
+        detected=sum(1 for r in rows if r.detected),
+        matched=sum(1 for r in rows if r.matched),
+        detections_with_no_injection=detections_with_no_injection,
+    )
+    return DetectionResponse(summary=summary, rows=rows)
+
+
+def _bucket_by_utc_day(rows: Sequence[Any]) -> dict[date, Any]:
+    """Index ``(day_ts, value)`` grouped rows by their UTC calendar date."""
+    return {day.astimezone(UTC).date(): value for day, value in rows}
+
+
+@router.get("/analytics/timeseries", response_model=TimeseriesResponse)
+async def analytics_timeseries(
+    staff: StaffUser,
+    days: int = Query(default=14, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+) -> TimeseriesResponse:
+    """Daily funnel + spend counters over the last ``days`` UTC days (dense: days
+    with no activity are real zeros, so the sparklines stay evenly time-spaced)."""
+    today = datetime.now(UTC).date()
+    dates = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
+    since = datetime.combine(dates[0], datetime.min.time(), tzinfo=UTC)
+
+    async def _daily(ts_col: Any, *, where: Any = None, value: Any = None) -> dict[date, Any]:
+        day = func.date_trunc("day", ts_col, "UTC")
+        agg = func.count() if value is None else func.coalesce(func.sum(value), 0)
+        stmt = select(day, agg).where(ts_col >= since)
+        if where is not None:
+            stmt = stmt.where(where)
+        stmt = stmt.group_by(day).order_by(day)
+        return _bucket_by_utc_day((await db.execute(stmt)).all())
+
+    agent_runs = await _daily(AgentRun.started_at)
+    proposals_created = await _daily(Proposal.created_at)
+    proposals_approved = await _daily(
+        Proposal.decided_at,
+        where=Proposal.status.in_((ProposalStatus.APPROVED, ProposalStatus.EXECUTED)),
+    )
+    nudges_sent = await _daily(Nudge.created_at)
+    # Nudges carry no acted-at timestamp (only `created_at` + terminal status), so
+    # acted counts bucket by the nudge's send day - a "of nudges sent that day, how
+    # many were later acted" cohort read, the most honest slice the schema allows.
+    nudges_acted = await _daily(Nudge.created_at, where=Nudge.status == NudgeStatus.ACTED)
+    llm_cost = await _daily(LlmCall.created_at, value=LlmCall.cost_usd)
+
+    points = [
+        TimeseriesPoint(
+            date=day.isoformat(),
+            agent_runs=int(agent_runs.get(day, 0)),
+            proposals_created=int(proposals_created.get(day, 0)),
+            proposals_approved=int(proposals_approved.get(day, 0)),
+            nudges_sent=int(nudges_sent.get(day, 0)),
+            nudges_acted=int(nudges_acted.get(day, 0)),
+            llm_cost_usd=Decimal(llm_cost.get(day, 0) or 0),
+        )
+        for day in dates
+    ]
+    return TimeseriesResponse(days=days, points=points)
+
+
+@router.get("/analytics/proposals", response_model=ProposalOutcomesResponse)
+async def analytics_proposals(
+    staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> ProposalOutcomesResponse:
+    """HITL proposal outcome mix: status totals, average decision latency, and a
+    per-agent created/approved/rejected breakdown for the approval-rate bars."""
+    status_rows = (
+        await db.execute(select(Proposal.status, func.count()).group_by(Proposal.status))
+    ).all()
+    by_status: dict[ProposalStatus, int] = {row[0]: row[1] for row in status_rows}
+
+    avg_decision_seconds = await db.scalar(
+        select(
+            func.avg(func.extract("epoch", Proposal.decided_at - Proposal.created_at))
+        ).where(Proposal.decided_at.is_not(None))
+    )
+
+    approved_filter = Proposal.status.in_((ProposalStatus.APPROVED, ProposalStatus.EXECUTED))
+    agent_rows = (
+        await db.execute(
+            select(
+                Proposal.agent,
+                func.count(),
+                func.count().filter(approved_filter),
+                func.count().filter(Proposal.status == ProposalStatus.REJECTED),
+            )
+            .group_by(Proposal.agent)
+            .order_by(func.count().desc())
+        )
+    ).all()
+
+    return ProposalOutcomesResponse(
+        pending=by_status.get(ProposalStatus.PENDING, 0),
+        approved=by_status.get(ProposalStatus.APPROVED, 0),
+        rejected=by_status.get(ProposalStatus.REJECTED, 0),
+        executed=by_status.get(ProposalStatus.EXECUTED, 0),
+        avg_decision_seconds=round(float(avg_decision_seconds), 1)
+        if avg_decision_seconds is not None
+        else None,
+        by_agent=[
+            ProposalAgentRow(agent=agent, created=created, approved=approved, rejected=rejected)
+            for agent, created, approved, rejected in agent_rows
+        ],
+    )
+
+
+# ===========================================================================
 # Sim: on-demand life-event injection
 # ===========================================================================
 #
@@ -829,6 +1090,19 @@ async def inject_sim_event(
     txns = sim_generator.generate_history(
         persona, months, inject_seed, state=state, start_date=start_date
     )
+
+    # Persist the ground truth BEFORE publishing: this is the auditable label the
+    # detection scorecard grades the agent mesh against (injected type + customer +
+    # time + the script's params). `injected_at` (server now()) is the t0 for the
+    # detection-lag measurement.
+    injection = SimInjection(
+        customer_id=customer.id,
+        injected_type=event_type.value,
+        injected_by=staff.email,
+        params=ground_truth.params,
+    )
+    db.add(injection)
+    await db.flush()
 
     redis = get_redis()
     for txn in txns:

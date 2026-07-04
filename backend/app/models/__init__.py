@@ -39,6 +39,7 @@ from app.models.enums import (
 )
 from app.models.identity import Credential, OtpCode, User
 from app.models.memory import EMBEDDING_DIM, AgentMemory
+from app.models.sim_injection import SimInjection
 from app.models.tracing import AgentRun, AgentStep, LlmCall
 
 __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
@@ -72,6 +73,8 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     "Nudge",
     "Notification",
     "LifeEvent",
+    # sim
+    "SimInjection",
     # audit
     "AuditLog",
     "chain_hash",

@@ -242,6 +242,32 @@ async def test_agent_run_guard_dead_letters_on_timeout(monkeypatch: pytest.Monke
     assert dlq[0][1]["rule"] == "windfall"
 
 
+async def test_agent_run_guard_pauses_on_budget_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the run trips the daily budget, the guard skips it (returns None)
+    WITHOUT dead-lettering - the event pipeline pauses, it does not poison the DLQ."""
+    from app.llm.budget import BudgetExceeded
+
+    async def _over_budget(customer_id: str, summary: str, *, event: object = None) -> object:
+        raise BudgetExceeded("daily LLM budget reached")
+
+    monkeypatch.setattr(event_consumer, "run_event_trigger", _over_budget)
+
+    match = RuleMatch(rule="windfall", event_summary="big credit", evidence={})
+    txn: TxnLike = {
+        "ts": datetime.now(UTC), "amount_paise": 250_000_00, "direction": "credit",
+        "channel": "neft", "category": "bonus", "merchant": "Acme", "balance_after_paise": 1,
+    }
+    envelope = {"event_id": "evt-budget", "customer_id": "cb", "payload": {}}
+
+    result = await event_consumer._run_agent_guarded("cb", match, txn, envelope)
+    assert result is None
+
+    dlq = await get_redis().xrange(TXN_EVENTS_DLQ, min="-", max="+")
+    assert dlq == []  # never dead-lettered
+
+
 async def test_process_envelope_continues_when_agent_run_times_out(
     db: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

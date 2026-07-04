@@ -191,10 +191,13 @@ class WorkerHealthOut(BaseModel):
 
 
 class LlmBudgetOut(BaseModel):
-    """Today's LLM spend (UTC day), from the `llm_calls` cost ledger."""
+    """Today's LLM spend (UTC day), from the `llm_calls` cost ledger, against the
+    configured daily budget guard."""
 
     calls_today: int
     cost_usd_today: Decimal
+    budget_usd: Decimal
+    over_budget: bool
 
 
 class DlqEntrySummaryOut(BaseModel):
@@ -238,3 +241,73 @@ class SimInjectEventResponse(BaseModel):
     type: str
     mode: str
     detail: dict[str, Any]
+
+
+# ===========================================================================
+# Analytics (detection scorecard, funnel time series, proposal outcomes)
+# ===========================================================================
+
+
+class DetectionRow(BaseModel):
+    """One injected ground-truth event, paired with the detection it produced."""
+
+    injection_id: uuid.UUID
+    customer_id: uuid.UUID
+    customer_name: str
+    injected_type: str
+    injected_at: datetime
+    # The `life_events.type` values that count as a correct detection for this
+    # injected type (empty = none expected, e.g. churn_risk).
+    expected_types: list[str]
+    detected: bool
+    detected_type: str | None
+    confidence: float | None
+    lag_seconds: float | None
+    matched: bool
+
+
+class DetectionSummary(BaseModel):
+    injected: int
+    detected: int
+    matched: int
+    # Life events detected that fall outside any injection's attribution window -
+    # a rough false-positive / unprompted-detection count.
+    detections_with_no_injection: int
+
+
+class DetectionResponse(BaseModel):
+    summary: DetectionSummary
+    rows: list[DetectionRow]
+
+
+class TimeseriesPoint(BaseModel):
+    """One UTC-day bucket of funnel + spend counters."""
+
+    date: str
+    agent_runs: int
+    proposals_created: int
+    proposals_approved: int
+    nudges_sent: int
+    nudges_acted: int
+    llm_cost_usd: Decimal
+
+
+class TimeseriesResponse(BaseModel):
+    days: int
+    points: list[TimeseriesPoint]
+
+
+class ProposalAgentRow(BaseModel):
+    agent: str
+    created: int
+    approved: int
+    rejected: int
+
+
+class ProposalOutcomesResponse(BaseModel):
+    pending: int
+    approved: int
+    rejected: int
+    executed: int
+    avg_decision_seconds: float | None
+    by_agent: list[ProposalAgentRow]

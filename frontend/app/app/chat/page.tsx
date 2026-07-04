@@ -521,6 +521,7 @@ export default function ChatPage() {
           onSend={() => handleSend()}
           onStop={handleStop}
           isStreaming={isStreaming}
+          preferredLanguage={me?.customer?.preferred_language}
         />
       </div>
     </div>

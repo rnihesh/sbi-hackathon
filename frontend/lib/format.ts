@@ -47,6 +47,27 @@ export function formatLatency(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
+/** Renders a second-granularity duration in human units: "8s" / "2m 30s" /
+ * "1h 5m" / "2d 3h". Used for detection lag (inject -> detected). */
+export function formatSecondsHuman(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds)) return "-"
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s}s`
+  if (s < 3600) {
+    const m = Math.floor(s / 60)
+    const rem = s % 60
+    return rem ? `${m}m ${rem}s` : `${m}m`
+  }
+  if (s < 86400) {
+    const h = Math.floor(s / 3600)
+    const m = Math.floor((s % 3600) / 60)
+    return m ? `${h}h ${m}m` : `${h}h`
+  }
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  return h ? `${d}d ${h}h` : `${d}d`
+}
+
 /** Picks the singular or plural form of a noun for `count` (e.g. "1 call" vs
  * "83 calls"). */
 export function pluralize(count: number, singular: string, plural: string = `${singular}s`): string {

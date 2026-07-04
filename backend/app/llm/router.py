@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator, Sequence
+from decimal import Decimal
 from functools import lru_cache
 from time import perf_counter
 from typing import Any
@@ -30,6 +31,7 @@ from app.llm.base import (
     TextDelta,
     ToolSpec,
 )
+from app.llm.budget import LlmBudgetGuard
 from app.llm.cost import compute_cost
 from app.llm.providers.anthropic import AnthropicProvider
 from app.llm.providers.gemini import GeminiProvider
@@ -55,9 +57,11 @@ class LLMRouter:
         settings: Settings | None = None,
         providers: dict[str, LLMProvider] | None = None,
         sessionmaker: async_sessionmaker[AsyncSession] | None = None,
+        budget_guard: LlmBudgetGuard | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._sessionmaker = sessionmaker
+        self._budget = budget_guard
         self._timeout = self._settings.llm_timeout_seconds
         self._default_max_tokens = self._settings.llm_default_max_tokens
         self._bg_tasks: set[asyncio.Task[None]] = set()
@@ -216,6 +220,7 @@ class LLMRouter:
                 error=None,
                 purpose=purpose,
             )
+            await self._track_spend(resp.cost_usd)
             return resp
 
         raise LLMRouterError(f"all providers failed for tier {tier_str!r}: {'; '.join(errors)}")
@@ -318,6 +323,7 @@ class LLMRouter:
                 error=None,
                 purpose=purpose,
             )
+            await self._track_spend(final_response.cost_usd)
             yield StreamDone(final_response)
             return
 
@@ -389,6 +395,25 @@ class LLMRouter:
         except Exception as exc:
             logger.warning("llm_call_persist_failed", error=str(exc))
 
+    # ------------------------------------------------------------------
+    # daily budget guard (Redis spend counter)
+    # ------------------------------------------------------------------
+    async def _track_spend(self, cost_usd: Decimal) -> None:
+        """Add a completed call's cost to the day's Redis spend counter.
+
+        No-op when no budget guard is wired (unit tests, fake router). Best-effort:
+        a Redis failure is swallowed by the guard so it can never break a call.
+        """
+        if self._budget is not None:
+            await self._budget.record(cost_usd)
+
+    async def raise_if_over_budget(self) -> None:
+        """Raise :class:`~app.llm.budget.BudgetExceeded` when the day's spend is over
+        budget. Called by the event-triggered path only (chat never invokes it, so
+        user-facing traffic is never throttled). No-op without a budget guard."""
+        if self._budget is not None:
+            await self._budget.raise_if_over()
+
 
 @lru_cache(maxsize=1)
 def get_router() -> LLMRouter:
@@ -403,4 +428,11 @@ def get_router() -> LLMRouter:
         from app.llm.fake import FakeLLMRouter
 
         return FakeLLMRouter(settings)
-    return LLMRouter(settings=settings, sessionmaker=get_sessionmaker())
+    from app.core.redis import get_redis
+
+    budget_guard = LlmBudgetGuard(
+        get_redis, Decimal(str(settings.llm_daily_budget_usd))
+    )
+    return LLMRouter(
+        settings=settings, sessionmaker=get_sessionmaker(), budget_guard=budget_guard
+    )
