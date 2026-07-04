@@ -50,7 +50,7 @@ export default function LeadsPage() {
 
       {error && (
         <Card className="mb-4">
-          <CardContent className="py-4 text-sm text-muted-foreground">{error}</CardContent>
+          <CardContent className="text-sm text-muted-foreground">{error}</CardContent>
         </Card>
       )}
 
@@ -66,7 +66,7 @@ export default function LeadsPage() {
           <div className="flex flex-col gap-3 md:hidden">
             {leads.map((lead) => (
               <Card key={lead.id}>
-                <CardContent className="flex flex-col gap-2 pt-4">
+                <CardContent className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium">{lead.name ?? "Unnamed lead"}</span>
                     <Badge variant={stageBadgeVariant(lead.stage)} className="capitalize">

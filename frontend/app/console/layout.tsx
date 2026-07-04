@@ -1,4 +1,5 @@
 import * as React from "react"
+import type { Metadata } from "next"
 
 import { ConsoleShell } from "./console-shell"
 
@@ -7,6 +8,10 @@ import { ConsoleShell } from "./console-shell"
 // the client, so there is nothing meaningful to bake in. This config must live
 // in a server component (route segment config is ignored in "use client" files).
 export const dynamic = "force-dynamic"
+
+export const metadata: Metadata = {
+  title: "Console",
+}
 
 export default function ConsoleLayout({
   children,

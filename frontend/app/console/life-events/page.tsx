@@ -42,7 +42,7 @@ export default function LifeEventsPage() {
 
       {error && (
         <Card className="mb-4">
-          <CardContent className="py-4 text-sm text-muted-foreground">{error}</CardContent>
+          <CardContent className="text-sm text-muted-foreground">{error}</CardContent>
         </Card>
       )}
 

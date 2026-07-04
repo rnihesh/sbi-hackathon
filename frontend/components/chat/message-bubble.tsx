@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm"
 import { RotateCw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { SarathiMark } from "@/components/chat/sarathi-mark"
+import { SarathiMark } from "@/components/brand/logo"
 import { ToolActivityChip } from "@/components/chat/tool-activity-chip"
 import { StructuredCard } from "@/components/chat/structured-card"
 import type { ChatMessage, ProductOffer } from "@/lib/chat-types"
@@ -58,7 +58,7 @@ export function MessageBubble({
 
   return (
     <div className="flex items-start gap-2">
-      <SarathiMark className="mt-1" />
+      <SarathiMark className="mt-1 text-primary" />
       <div className="flex min-w-0 max-w-[85%] flex-col gap-2 sm:max-w-[75%]">
         {hasToolActivity && (
           <div className="flex flex-wrap gap-1.5">

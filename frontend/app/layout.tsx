@@ -10,8 +10,22 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "Sarathi",
-  description: "A banker in every pocket - an agentic relationship manager for SBI.",
+  metadataBase: new URL("https://sarathi.niheshr.com"),
+  title: {
+    default: "Sarathi - A banker in every pocket",
+    template: "%s · Sarathi",
+  },
+  description:
+    "Sarathi is an agentic AI relationship manager for banking - acquisition, adoption, and engagement, all in one conversation.",
+  openGraph: {
+    siteName: "Sarathi",
+    type: "website",
+    locale: "en_IN",
+    url: "/",
+  },
+  twitter: {
+    card: "summary_large_image",
+  },
 }
 
 export const viewport: Viewport = {

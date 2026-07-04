@@ -46,7 +46,7 @@ export function ProposalCard({
       transition={springSoft}
     >
       <Card>
-        <CardContent className="flex flex-col gap-3 pt-4">
+        <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Badge variant="secondary">{humanizeIdentifier(proposal.agent)}</Badge>

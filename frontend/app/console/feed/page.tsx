@@ -34,8 +34,10 @@ export default function LiveFeedPage() {
       {items.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border py-16 text-center">
           <Radio className="size-5 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            {status === "open" ? "Listening - nothing has happened yet." : "Connecting to the live feed…"}
+          <p className="max-w-sm text-sm text-muted-foreground">
+            {status === "open"
+              ? "Events appear here when the transaction stream is running - start the sim worker to see live activity."
+              : "Connecting to the live feed…"}
           </p>
         </div>
       ) : (

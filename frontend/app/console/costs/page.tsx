@@ -48,7 +48,7 @@ export default function CostsPage() {
 
       {error && (
         <Card className="mb-6">
-          <CardContent className="py-4 text-sm text-muted-foreground">{error}</CardContent>
+          <CardContent className="text-sm text-muted-foreground">{error}</CardContent>
         </Card>
       )}
 
@@ -57,7 +57,7 @@ export default function CostsPage() {
           <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {["Total spend", "Tokens in/out", "Calls", "Avg. latency"].map((tile) => (
               <Card key={tile}>
-                <CardContent className="space-y-2 pt-4">
+                <CardContent className="space-y-2">
                   <p className="text-xs text-muted-foreground">{tile}</p>
                   <Skeleton className="h-5 w-20" />
                 </CardContent>

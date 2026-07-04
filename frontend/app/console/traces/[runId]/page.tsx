@@ -64,7 +64,7 @@ export default function TraceDetailPage() {
         </div>
       ) : error ? (
         <Card>
-          <CardContent className="py-4 text-sm text-muted-foreground">{error}</CardContent>
+          <CardContent className="text-sm text-muted-foreground">{error}</CardContent>
         </Card>
       ) : trace === null ? (
         <TraceDetailSkeleton />
@@ -114,7 +114,7 @@ export default function TraceDetailPage() {
                     <StepKindIcon kind={step.kind} />
                   </span>
                   <Card>
-                    <CardContent className="flex flex-col gap-3 pt-4">
+                    <CardContent className="flex flex-col gap-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs text-muted-foreground">

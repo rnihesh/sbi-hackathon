@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Press } from "@/components/ui/press"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { CONSOLE_NAV_ITEMS } from "@/components/console/nav-items"
+import { SarathiMark } from "@/components/brand/logo"
 
 export function ConsoleSidebar() {
   const pathname = usePathname()
@@ -24,7 +25,7 @@ export function ConsoleSidebar() {
       className="sticky top-0 hidden h-dvh shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar py-4 md:flex"
     >
       <div className={cn("mb-6 flex items-center gap-2 px-4", collapsed && "justify-center px-0")}>
-        <span className="size-2 shrink-0 rounded-full bg-primary" aria-hidden />
+        <SarathiMark className="shrink-0 text-primary" />
         {!collapsed && (
           <span className="truncate text-sm font-semibold tracking-tight text-sidebar-foreground">
             Sarathi Console

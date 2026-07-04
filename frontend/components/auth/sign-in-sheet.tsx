@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/sheet"
 import { OtpInput } from "@/components/auth/otp-input"
 import { GoogleGlyph } from "@/components/auth/google-glyph"
+import { SarathiMark } from "@/components/brand/logo"
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -132,7 +133,10 @@ export function SignInSheet({
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent className="flex flex-col gap-0 sm:max-w-md">
         <SheetHeader>
-          <SheetTitle>Sign in to Sarathi</SheetTitle>
+          <SheetTitle className="flex items-center gap-2">
+            <SarathiMark className="text-primary" />
+            Sign in to Sarathi
+          </SheetTitle>
           <SheetDescription>
             One account for chat, your accounts, and nudges.
           </SheetDescription>

@@ -52,7 +52,7 @@ export default function FunnelsPage() {
 
       {error && (
         <Card>
-          <CardContent className="py-4 text-sm text-muted-foreground">{error}</CardContent>
+          <CardContent className="text-sm text-muted-foreground">{error}</CardContent>
         </Card>
       )}
 

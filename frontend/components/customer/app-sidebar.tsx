@@ -8,17 +8,15 @@ import { cn } from "@/lib/utils"
 import { navPillTransition } from "@/lib/motion"
 import { Press } from "@/components/ui/press"
 import { CUSTOMER_TABS } from "@/components/customer/tabs"
+import { SarathiLogo } from "@/components/brand/logo"
 
 export function AppSidebar() {
   const pathname = usePathname()
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-3 py-6 md:flex">
-      <Link href="/" className="mb-8 flex items-center gap-2 px-2">
-        <span className="size-2 rounded-full bg-primary" aria-hidden />
-        <span className="text-sm font-semibold tracking-tight text-sidebar-foreground">
-          Sarathi
-        </span>
+      <Link href="/" className="mb-8 flex items-center px-2">
+        <SarathiLogo className="text-sm text-sidebar-foreground" markClassName="text-primary" />
       </Link>
 
       <nav className="flex flex-1 flex-col gap-1" aria-label="Primary">

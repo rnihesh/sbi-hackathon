@@ -71,7 +71,7 @@ export default function TracesPage() {
 
       {error && (
         <Card className="mb-4">
-          <CardContent className="py-4 text-sm text-muted-foreground">{error}</CardContent>
+          <CardContent className="text-sm text-muted-foreground">{error}</CardContent>
         </Card>
       )}
 
@@ -93,7 +93,7 @@ export default function TracesPage() {
               <motion.div key={trace.run_id} variants={staggerItem}>
                 <Link href={`/console/traces/${trace.run_id}`}>
                   <Card className="transition-colors hover:bg-muted/50">
-                    <CardContent className="flex flex-col gap-2 pt-4">
+                    <CardContent className="flex flex-col gap-2">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Badge variant="secondary" className="capitalize">

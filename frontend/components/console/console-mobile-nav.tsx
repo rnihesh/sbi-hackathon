@@ -15,6 +15,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { CONSOLE_NAV_ITEMS } from "@/components/console/nav-items"
+import { SarathiMark } from "@/components/brand/logo"
 
 export function ConsoleMobileNav() {
   const pathname = usePathname()
@@ -29,7 +30,10 @@ export function ConsoleMobileNav() {
       </SheetTrigger>
       <SheetContent side="left" className="w-64 p-0">
         <SheetHeader>
-          <SheetTitle>Sarathi Console</SheetTitle>
+          <SheetTitle className="flex items-center gap-2">
+            <SarathiMark className="text-primary" />
+            Sarathi Console
+          </SheetTitle>
         </SheetHeader>
         <nav className="flex flex-col gap-1 px-2" aria-label="Console">
           {CONSOLE_NAV_ITEMS.map((item) => {
