@@ -24,6 +24,22 @@ config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 target_metadata = Base.metadata
 
+# Tables owned by LangGraph's Postgres checkpointer (created via
+# AsyncPostgresSaver.setup(), not Alembic) — excluded from autogenerate
+# comparison so `alembic check` stays clean.
+EXTERNAL_TABLES = {
+    "checkpoints",
+    "checkpoint_blobs",
+    "checkpoint_writes",
+    "checkpoint_migrations",
+}
+
+
+def include_object(
+    obj: object, name: str | None, type_: str, reflected: bool, compare_to: object
+) -> bool:
+    return not (type_ == "table" and name in EXTERNAL_TABLES)
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (emit SQL without a DB connection)."""
@@ -34,6 +50,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -44,6 +61,7 @@ def do_run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
