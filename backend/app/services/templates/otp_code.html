@@ -1,0 +1,10 @@
+{% extends "_base.html" %}
+{% block title %}Your Sarathi verification code{% endblock %}
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi{% if full_name %} {{ full_name }}{% endif %},</p>
+<p style="margin:0 0 20px 0;">Use this code to finish signing in to Sarathi. It expires in {{ ttl_minutes }} minutes.</p>
+<div style="margin:0 0 20px 0;text-align:center;background-color:#fef2ee;border:1px solid #f3c8b8;border-radius:12px;padding:20px;">
+  <span style="font-size:32px;font-weight:700;letter-spacing:0.3em;color:#b3512f;">{{ code }}</span>
+</div>
+<p style="margin:0;color:#57534e;font-size:13px;">If you didn't request this code, you can safely ignore this email — no one can access your account without it.</p>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% import "_base.html" as base %}
+{% extends "_base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi {{ full_name }},</p>
+<p style="margin:0 0 8px 0;font-size:17px;font-weight:600;color:#1c1917;">{{ event_headline }}</p>
+<p style="margin:0 0 20px 0;">{{ body }}</p>
+{% if cta_url and cta_label %}
+<div style="margin:0 0 20px 0;">
+  {{ base.cta_button(cta_url, cta_label) }}
+</div>
+{% endif %}
+<p style="margin:0;color:#57534e;font-size:13px;">This suggestion was reviewed by your Sarathi relationship manager based on recent activity on your account.</p>
+{% endblock %}

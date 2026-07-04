@@ -1,0 +1,11 @@
+{% import "_base.html" as base %}
+{% extends "_base.html" %}
+{% block title %}Welcome to Sarathi{% endblock %}
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi {{ full_name }},</p>
+<p style="margin:0 0 20px 0;">Welcome to Sarathi — your account is set up and your relationship manager is already looking out for you: nudges on dormant balances, better-fit products as your life changes, and a straight answer whenever you ask for one.</p>
+<div style="margin:0 0 20px 0;">
+  {{ base.cta_button(cta_url, "Open Sarathi") }}
+</div>
+<p style="margin:0;color:#57534e;font-size:13px;">You can add a passkey or update your details anytime from your profile.</p>
+{% endblock %}

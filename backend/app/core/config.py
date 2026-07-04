@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # repo root = backend/app/core/config.py -> parents[3]
@@ -59,10 +59,16 @@ class Settings(BaseSettings):
     google_client_secret: str | None = None
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
-    jwt_access_ttl_seconds: int = 60 * 30
-    jwt_refresh_ttl_seconds: int = 60 * 60 * 24 * 14
+    jwt_access_ttl_seconds: int = 60 * 15
+    jwt_refresh_ttl_seconds: int = 60 * 60 * 24 * 7
+    # Cookie `Domain` attribute; None = exact host only (fine for single-host dev/demo).
+    # Set to e.g. ".sarathi.example" in prod if the frontend/backend live on sibling subdomains.
+    cookie_domain: str | None = None
     webauthn_rp_id: str = "localhost"
     webauthn_origin: str = "http://localhost:3000"
+    webauthn_challenge_ttl_seconds: int = 60 * 5
+    otp_ttl_seconds: int = 60 * 10
+    otp_rate_limit_per_hour: int = 3
 
     # --- email (AWS SES ap-south-1) ---
     aws_access_key_id: str | None = None
@@ -80,6 +86,14 @@ class Settings(BaseSettings):
     @property
     def has_any_llm_key(self) -> bool:
         return any((self.openai_api_key, self.gemini_api_key, self.anthropic_api_key))
+
+    @model_validator(mode="after")
+    def _require_real_jwt_secret_outside_dev(self) -> Settings:
+        """Refuse to boot with the placeholder JWT secret anywhere but dev — sessions are
+        only as secure as this key."""
+        if not self.is_dev and self.jwt_secret == "change-me":
+            raise ValueError("JWT_SECRET must be set to a real secret when APP_ENV != dev")
+        return self
 
 
 @lru_cache(maxsize=1)
