@@ -25,13 +25,14 @@ import uuid
 from typing import Annotated
 
 import orjson
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.actions import create_proposal
 from app.core.db import get_db
 from app.core.logging import get_logger
+from app.core.ratelimit import rate_limit
 from app.core.redis import get_redis
 from app.core.security import get_current_user
 from app.llm.router import LLMRouter, get_router
@@ -225,9 +226,22 @@ async def _pending_product_codes(db: AsyncSession, customer_id: uuid.UUID) -> se
     }
 
 
-@router.post("/{code}/apply", response_model=ProductApplyResponse)
+_PRODUCT_CODE_PATTERN = r"^[a-z0-9_]{1,64}$"
+"""Catalog codes are lowercase snake identifiers (see `app.services.products.CATALOG`);
+constraining the path param rejects junk before any DB lookup."""
+
+
+@router.post(
+    "/{code}/apply",
+    response_model=ProductApplyResponse,
+    # Creates a real HITL proposal + a notification. 10/hour per user stops a client
+    # from spamming the review queue while leaving room for genuine multi-product apps.
+    dependencies=[
+        Depends(rate_limit("product_apply", limit=10, window_seconds=3600, key="by_user"))
+    ],
+)
 async def apply_for_product(
-    code: str,
+    code: Annotated[str, Path(pattern=_PRODUCT_CODE_PATTERN)],
     user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ProductApplyResponse:

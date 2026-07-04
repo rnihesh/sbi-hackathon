@@ -12,6 +12,7 @@ nobody is staff.
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
@@ -19,7 +20,7 @@ from typing import Annotated, Any
 
 import orjson
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
@@ -28,6 +29,7 @@ from app.agents.entrypoints import execute_proposal
 from app.agents.guardrails import AuditTrail
 from app.core.config import get_settings, is_staff_email
 from app.core.db import get_db
+from app.core.errors import ERROR_RING_KEY
 from app.core.logging import get_logger
 from app.core.redis import (
     AGENT_ACTIONS,
@@ -54,17 +56,21 @@ from app.models.identity import User
 from app.models.tracing import AgentRun, AgentStep, LlmCall
 from app.schemas.console import (
     AcquisitionFunnel,
+    ConsoleErrorsResponse,
     ConsoleHealthResponse,
     CostBreakdownRow,
     CostSeriesPoint,
     CostsResponse,
     CustomerSearchOut,
+    DlqEntrySummaryOut,
+    ErrorLogEntryOut,
     FunnelResponse,
     HoldingCategoryFunnel,
     LeadCustomerOut,
     LeadOut,
     LifeEventCustomerOut,
     LifeEventOut,
+    LlmBudgetOut,
     NudgeFunnel,
     ProposalActionResult,
     ProposalCustomerOut,
@@ -169,17 +175,104 @@ async def _worker_health(redis: Any) -> WorkerHealthOut:
     return WorkerHealthOut(alive=alive, last_event_at=last_event_at, pending=pending, dlq=dlq)
 
 
+_DLQ_HEALTH_SAMPLE = 5
+"""How many most-recent DLQ entries the health panel summarizes."""
+
+_ERRORS_PAGE_SIZE = 50
+"""How many recent unhandled errors `GET /console/errors` returns."""
+
+
+async def _timed_db_ping(db: AsyncSession) -> tuple[str, float | None]:
+    """Run a timed ``SELECT 1``; return ``(status, latency_ms)`` (None on failure)."""
+    started = time.perf_counter()
+    try:
+        await db.execute(text("SELECT 1"))
+    except Exception:
+        logger.warning("console_health_db_failed", exc_info=True)
+        return "degraded", None
+    return "ok", round((time.perf_counter() - started) * 1000, 2)
+
+
+async def _timed_redis_ping(redis: Any) -> float | None:
+    """Run a timed ``PING``; return latency in ms (None on failure)."""
+    started = time.perf_counter()
+    try:
+        await redis.ping()
+    except Exception:
+        logger.warning("console_health_redis_failed", exc_info=True)
+        return None
+    return round((time.perf_counter() - started) * 1000, 2)
+
+
+async def _llm_budget_today(db: AsyncSession) -> LlmBudgetOut:
+    """Today's (UTC day) LLM call count + cost from the `llm_calls` ledger."""
+    day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    calls, cost = (
+        await db.execute(
+            select(
+                func.count(),
+                func.coalesce(func.sum(LlmCall.cost_usd), 0),
+            ).where(LlmCall.created_at >= day_start)
+        )
+    ).one()
+    return LlmBudgetOut(calls_today=int(calls or 0), cost_usd_today=cost)
+
+
+async def _dlq_recent(redis: Any) -> list[DlqEntrySummaryOut]:
+    """Summaries of the most-recent DLQ entries (newest first, id + error snippet)."""
+    try:
+        entries = await redis.xrevrange(
+            TXN_EVENTS_DLQ, max="+", min="-", count=_DLQ_HEALTH_SAMPLE
+        )
+    except Exception:
+        return []
+    summaries: list[DlqEntrySummaryOut] = []
+    for entry_id, fields in entries or []:
+        raw_error = fields.get("error") if isinstance(fields, dict) else None
+        error = (str(raw_error)[:200]) if raw_error else None
+        summaries.append(DlqEntrySummaryOut(id=str(entry_id), error=error))
+    return summaries
+
+
 @router.get("/health", response_model=ConsoleHealthResponse)
 async def console_health(
     staff: StaffUser, db: AsyncSession = Depends(get_db)
 ) -> ConsoleHealthResponse:
+    redis = get_redis()
+    api_status, db_latency_ms = await _timed_db_ping(db)
+    redis_latency_ms = await _timed_redis_ping(redis)
+    worker = await _worker_health(redis)
+    llm_budget = await _llm_budget_today(db)
+    dlq_recent = await _dlq_recent(redis)
+    return ConsoleHealthResponse(
+        worker=worker,
+        api=api_status,
+        db_latency_ms=db_latency_ms,
+        redis_latency_ms=redis_latency_ms,
+        llm_budget=llm_budget,
+        dlq_recent=dlq_recent,
+    )
+
+
+@router.get("/errors", response_model=ConsoleErrorsResponse)
+async def console_errors(staff: StaffUser) -> ConsoleErrorsResponse:
+    """Recent unhandled server errors (newest first) from the Redis error ring.
+
+    Populated by the 500 exception handler (:mod:`app.core.errors`); a lightweight,
+    self-hosted tail so staff can spot a spike without an external error tracker."""
+    redis = get_redis()
     try:
-        await db.execute(select(1))
-        api_status = "ok"
+        raw = await redis.lrange(ERROR_RING_KEY, 0, _ERRORS_PAGE_SIZE - 1)
     except Exception:
-        api_status = "degraded"
-    worker = await _worker_health(get_redis())
-    return ConsoleHealthResponse(worker=worker, api=api_status)
+        logger.warning("console_errors_read_failed", exc_info=True)
+        raw = []
+    errors: list[ErrorLogEntryOut] = []
+    for item in raw or []:
+        try:
+            errors.append(ErrorLogEntryOut.model_validate(orjson.loads(item)))
+        except Exception:
+            continue
+    return ConsoleErrorsResponse(errors=errors)
 
 
 # ===========================================================================

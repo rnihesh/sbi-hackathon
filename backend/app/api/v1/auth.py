@@ -50,6 +50,7 @@ from webauthn.helpers.structs import (
 from app.core.config import get_settings, is_staff_email
 from app.core.db import get_db
 from app.core.logging import get_logger
+from app.core.ratelimit import rate_limit
 from app.core.redis import get_redis
 from app.core.security import (
     SessionError,
@@ -668,7 +669,15 @@ _OTP_SENT_MESSAGE = "If that email is registered, a verification code has been s
 _OTP_INVALID_MESSAGE = "Invalid or expired code"
 
 
-@router.post("/otp/send", response_model=MessageResponse, summary="Send an email OTP code")
+@router.post(
+    "/otp/send",
+    response_model=MessageResponse,
+    summary="Send an email OTP code",
+    # Per-email limit (3/hour) already lives in the handler and keeps a generic 200;
+    # this adds a per-IP cap (10/hour) to stop one host churning through many emails
+    # to fan out spam/enumeration. Crossing it is a real 429 (not the generic 200).
+    dependencies=[Depends(rate_limit("otp_send_ip", limit=10, window_seconds=3600, key="by_ip"))],
+)
 async def otp_send(
     payload: OtpSendRequest, db: AsyncSession = Depends(get_db)
 ) -> MessageResponse:

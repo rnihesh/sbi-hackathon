@@ -35,6 +35,7 @@ import signal
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from weakref import WeakKeyDictionary
 
 import orjson
 
@@ -57,6 +58,34 @@ CLAIM_MIN_IDLE_MS = 30_000
 MAX_DELIVERIES = 3
 HISTORY_WINDOW_DAYS = 200
 """Lookback window for trailing-median / recurring-category rule context."""
+
+AGENT_RUN_TIMEOUT_SECONDS = 120.0
+"""Hard ceiling on a single agent trigger. A run that wedges (a hung LLM call, a
+runaway graph) must not pin the consumer forever; on timeout we DLQ the envelope
+and move on rather than blocking the whole stream."""
+
+AGENT_RUN_CONCURRENCY = 2
+"""Max concurrent agent runs across the worker. An event burst (e.g. a big sim
+inject) could otherwise fan out dozens of simultaneous LLM-spending runs; this
+semaphore paces them so spend and provider load stay bounded."""
+
+# Semaphore keyed by the running loop object so a fresh loop (each pytest-asyncio
+# test gets one) never awaits a semaphore bound to a dead loop. A WeakKeyDictionary
+# drops the entry when the loop is GC'd and keys on the loop identity itself (not a
+# reusable id()). In the long-lived worker process there is exactly one loop, hence
+# exactly one semaphore.
+_agent_semaphores: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    WeakKeyDictionary()
+)
+
+
+def _agent_run_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    sem = _agent_semaphores.get(loop)
+    if sem is None:
+        sem = asyncio.Semaphore(AGENT_RUN_CONCURRENCY)
+        _agent_semaphores[loop] = sem
+    return sem
 
 
 async def ensure_group() -> None:
@@ -112,6 +141,46 @@ def _txn_to_txnlike(txn: Any) -> TxnLike:
         merchant=txn.merchant,
         balance_after_paise=txn.balance_after_paise,
     )
+
+
+async def _run_agent_guarded(
+    customer_id: str, match: Any, new_txn: TxnLike, envelope: dict[str, Any]
+) -> Any | None:
+    """Run one agent trigger under the concurrency semaphore + runtime timeout.
+
+    Returns the :class:`AgentRunResult` on success, or ``None`` if the run timed
+    out (in which case the raw envelope is dead-lettered and processing continues -
+    a single wedged run must never stall the whole stream).
+    """
+    sem = _agent_run_semaphore()
+    async with sem:
+        try:
+            async with asyncio.timeout(AGENT_RUN_TIMEOUT_SECONDS):
+                return await run_event_trigger(
+                    customer_id,
+                    match.event_summary,
+                    event={
+                        "rule": match.rule,
+                        "evidence": match.evidence,
+                        "transaction": dict(new_txn),
+                    },
+                )
+        except TimeoutError:
+            logger.error(
+                "event_agent_run_timeout",
+                customer_id=customer_id,
+                rule=match.rule,
+                timeout_s=AGENT_RUN_TIMEOUT_SECONDS,
+            )
+            await get_redis().xadd(
+                TXN_EVENTS_DLQ,
+                {
+                    "data": orjson.dumps(envelope).decode(),
+                    "error": f"agent_run_timeout after {AGENT_RUN_TIMEOUT_SECONDS}s",
+                    "rule": match.rule,
+                },
+            )
+            return None
 
 
 async def process_envelope(envelope: dict[str, Any]) -> None:
@@ -186,11 +255,9 @@ async def process_envelope(envelope: dict[str, Any]) -> None:
             )
             continue
         logger.info("event_rule_matched", customer_id=customer_id_raw, rule=match.rule)
-        result = await run_event_trigger(
-            customer_id_raw,
-            match.event_summary,
-            event={"rule": match.rule, "evidence": match.evidence, "transaction": dict(new_txn)},
-        )
+        result = await _run_agent_guarded(customer_id_raw, match, new_txn, envelope)
+        if result is None:
+            continue  # timed out and dead-lettered; keep draining the other matches
         await publish_run_result(
             redis,
             customer_id=customer_id_raw,

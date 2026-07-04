@@ -190,9 +190,42 @@ class WorkerHealthOut(BaseModel):
     dlq: int
 
 
+class LlmBudgetOut(BaseModel):
+    """Today's LLM spend (UTC day), from the `llm_calls` cost ledger."""
+
+    calls_today: int
+    cost_usd_today: Decimal
+
+
+class DlqEntrySummaryOut(BaseModel):
+    """One dead-letter entry summary (id + truncated error) for the health panel."""
+
+    id: str
+    error: str | None
+
+
 class ConsoleHealthResponse(BaseModel):
     worker: WorkerHealthOut
     api: str
+    db_latency_ms: float | None
+    redis_latency_ms: float | None
+    llm_budget: LlmBudgetOut
+    dlq_recent: list[DlqEntrySummaryOut]
+
+
+class ErrorLogEntryOut(BaseModel):
+    """One recent unhandled-error record from the Redis error ring."""
+
+    ts: str | None = None
+    request_id: str | None = None
+    path: str | None = None
+    method: str | None = None
+    status: int | None = None
+    error_class: str | None = None
+
+
+class ConsoleErrorsResponse(BaseModel):
+    errors: list[ErrorLogEntryOut]
 
 
 class SimInjectEventRequest(BaseModel):

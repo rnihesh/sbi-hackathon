@@ -80,6 +80,18 @@ class Settings(BaseSettings):
     otp_ttl_seconds: int = 60 * 10
     otp_rate_limit_per_hour: int = 3
 
+    # --- request hardening (rate limits, body cap, proxy trust) ---
+    # Trust the first hop of ``X-Forwarded-For`` for client-IP rate limiting.
+    # nginx fronts us in prod, so the real client IP is the first XFF entry there;
+    # in dev the app is hit directly and a client could spoof the header, so we
+    # only trust it outside dev OR when this flag is explicitly set (tests).
+    trust_forwarded_for: bool = False
+    # Hard cap on request body size (Content-Length). Bodies above this are
+    # rejected with a 413 envelope before the route runs. 256 KiB comfortably
+    # fits every real request (chat text is capped at 8000 chars) while stopping
+    # an accidental or malicious multi-megabyte upload from reaching the app.
+    max_request_bytes: int = 256 * 1024
+
     # --- email (AWS SES ap-south-1) ---
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
@@ -116,6 +128,14 @@ class Settings(BaseSettings):
     @property
     def is_dev(self) -> bool:
         return self.app_env.lower() in {"dev", "development", "local"}
+
+    @property
+    def trust_client_forwarded_for(self) -> bool:
+        """Whether to believe ``X-Forwarded-For`` for client-IP resolution.
+
+        True in any non-dev deployment (nginx sets a trustworthy first hop) or
+        when ``trust_forwarded_for`` is explicitly enabled."""
+        return (not self.is_dev) or self.trust_forwarded_for
 
     @property
     def has_any_llm_key(self) -> bool:

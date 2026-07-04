@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.core.logging import get_logger
+from app.core.ratelimit import rate_limit
 from app.core.redis import TXN_EVENTS, get_redis
 from app.core.security import get_current_user
 from app.llm.base import ChatMessage
@@ -191,7 +192,15 @@ def _clear_demo_pollution(customer: Customer) -> bool:
     return changed
 
 
-@router.post("/demo-activity", response_model=DemoActivityResponse)
+@router.post(
+    "/demo-activity",
+    response_model=DemoActivityResponse,
+    # Heavy: months of synthetic history + a fast-tier LLM flavour call + a burst of
+    # real events. 2/hour per user is ample for a genuine reload, absurd for abuse.
+    dependencies=[
+        Depends(rate_limit("demo_activity", limit=2, window_seconds=3600, key="by_user"))
+    ],
+)
 async def load_demo_activity(
     user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),

@@ -22,6 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.agents.entrypoints import run_chat_turn
 from app.core.db import get_db
 from app.core.logging import get_logger
+from app.core.ratelimit import rate_limit
 from app.core.redis import get_redis
 from app.core.security import get_optional_user
 from app.models.conversation import Conversation, Message
@@ -176,7 +177,12 @@ async def _publish_chat_activity(customer_id: str | None, done_event: dict[str, 
     )
 
 
-@router.post("/sessions/{conversation_id}/messages")
+@router.post(
+    "/sessions/{conversation_id}/messages",
+    # Every turn is an LLM call (real money). 20/min per signed-in user, or per IP
+    # for anonymous prospects, throttles a runaway client without hurting a human.
+    dependencies=[Depends(rate_limit("chat_messages", limit=20, window_seconds=60, key="by_user"))],
+)
 async def post_chat_message(
     conversation_id: str,
     payload: ChatMessageRequest,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -18,6 +17,12 @@ from app.agents.entrypoints import init_agents
 from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.db import dispose_engine, get_engine
+from app.core.errors import (
+    REQUEST_ID_HEADER,
+    bind_request_id,
+    error_envelope,
+    install_error_handlers,
+)
 from app.core.logging import get_logger, setup_logging
 from app.core.redis import close_redis, get_redis
 
@@ -43,6 +48,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
         await close_redis()
         logger.info("shutdown")
+
+
+def _oversize_response(request: Request, request_id: str) -> ORJSONResponse | None:
+    """Return a 413 envelope if the request's ``Content-Length`` exceeds the cap."""
+    raw = request.headers.get("content-length")
+    if not raw:
+        return None
+    try:
+        length = int(raw)
+    except ValueError:
+        return None
+    limit = get_settings().max_request_bytes
+    if length <= limit:
+        return None
+    logger.warning("request_body_too_large", content_length=length, limit=limit)
+    return ORJSONResponse(
+        status_code=413,
+        content=error_envelope(
+            code="payload_too_large",
+            message=f"Request body exceeds the {limit}-byte limit.",
+            request_id=request_id,
+        ),
+        headers={REQUEST_ID_HEADER: request_id},
+    )
 
 
 async def _check_db() -> bool:
@@ -86,35 +115,47 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def request_logging(
+    async def request_context(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
-        structlog.contextvars.bind_contextvars(request_id=request_id)
-        started = time.perf_counter()
+        request_id = bind_request_id(request)
         try:
-            response = await call_next(request)
-        except Exception:
+            # Global body-size cap: reject oversized payloads before they reach a
+            # route (and before any DB/LLM work). Header-based - our clients always
+            # send Content-Length - returning the same error envelope as everything
+            # else so the frontend handles it uniformly.
+            oversized = _oversize_response(request, request_id)
+            if oversized is not None:
+                return oversized
+
+            started = time.perf_counter()
+            try:
+                response = await call_next(request)
+            except Exception:
+                # An unhandled error still propagates to the 500 handler (which owns
+                # the traceback log + error-ring tail); we only note timing here.
+                duration_ms = round((time.perf_counter() - started) * 1000, 2)
+                logger.warning(
+                    "request_errored",
+                    method=request.method,
+                    path=request.url.path,
+                    duration_ms=duration_ms,
+                )
+                raise
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
-            logger.exception(
-                "request_failed",
+            logger.info(
+                "request",
                 method=request.method,
                 path=request.url.path,
+                status=response.status_code,
                 duration_ms=duration_ms,
             )
+            response.headers[REQUEST_ID_HEADER] = request_id
+            return response
+        finally:
             structlog.contextvars.clear_contextvars()
-            raise
-        duration_ms = round((time.perf_counter() - started) * 1000, 2)
-        logger.info(
-            "request",
-            method=request.method,
-            path=request.url.path,
-            status=response.status_code,
-            duration_ms=duration_ms,
-        )
-        response.headers["x-request-id"] = request_id
-        structlog.contextvars.clear_contextvars()
-        return response
+
+    install_error_handlers(app)
 
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> ORJSONResponse:
