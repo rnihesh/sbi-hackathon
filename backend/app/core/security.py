@@ -232,26 +232,40 @@ def clear_session_cookies(response: Response) -> None:
 # --------------------------------------------------------------------------------------
 
 
-async def _user_from_access_cookie(
-    access_token: str | None, db: AsyncSession
-) -> User | None:
-    if not access_token:
-        return None
+async def _user_from_present_access_cookie(access_token: str, db: AsyncSession) -> User:
+    """Resolve a *present* access cookie to its :class:`User`, or raise ``401``.
+
+    Any failure of a cookie that *is* present - malformed / expired / wrong-type
+    token, an unparseable subject, or a token naming a user who no longer exists -
+    is a broken (but real) session and raises ``401``. The caller decides what an
+    *absent* cookie means; this function never sees one.
+    """
     try:
         payload = decode_token(access_token, expected_type=TokenType.ACCESS)
-    except TokenError:
-        return None
+    except TokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session"
+        ) from exc
 
     sub = payload.get("sub")
-    if not sub:
-        return None
-    try:
-        user_id = uuid.UUID(str(sub))
-    except ValueError:
-        return None
+    user_id: uuid.UUID | None = None
+    if sub:
+        try:
+            user_id = uuid.UUID(str(sub))
+        except ValueError:
+            user_id = None
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session subject"
+        )
 
     result = await db.execute(select(User).where(User.id == user_id))
-    return result.scalar_one_or_none()
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Session user not found"
+        )
+    return user
 
 
 async def get_current_user(
@@ -262,15 +276,27 @@ async def get_current_user(
 
     Raises ``401`` if the cookie is missing, invalid, expired, or names an unknown user.
     """
-    user = await _user_from_access_cookie(sarathi_access, db)
-    if user is None:
+    if sarathi_access is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return user
+    return await _user_from_present_access_cookie(sarathi_access, db)
 
 
 async def get_optional_user(
     sarathi_access: Annotated[str | None, Cookie()] = None,
     db: AsyncSession = Depends(get_db),
 ) -> User | None:
-    """FastAPI dependency: resolve the authenticated user if present, else ``None``."""
-    return await _user_from_access_cookie(sarathi_access, db)
+    """FastAPI dependency for anon-friendly routes (e.g. chat onboarding).
+
+    Three-state contract:
+
+    - **no cookie** -> ``None``: a legitimate anonymous prospect.
+    - **present but broken cookie** (malformed / expired / unknown user) -> ``401``:
+      a real-but-dead session. Raising here rather than silently degrading to
+      anonymous lets the frontend refresh interceptor rotate the access token and
+      retry, instead of a signed-in user's chat quietly dropping to a prospect
+      thread the moment their short-lived access token expires.
+    - **valid cookie** -> the resolved :class:`User`.
+    """
+    if sarathi_access is None:
+        return None
+    return await _user_from_present_access_cookie(sarathi_access, db)

@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import sys
 import uuid
+from datetime import date, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,12 +103,28 @@ async def _reset_domain_tables(session: AsyncSession) -> None:
     logger.info("seed_reset_domain_tables", tables=_RESET_TABLES)
 
 
+def _history_start(months: int) -> date:
+    """Anchor the seeded transaction history so it ends at (roughly) today.
+
+    The sim generator's own ``DEFAULT_HISTORY_START`` is a fixed 2024 date, kept
+    deterministic for unit tests. For the live DB cohort we instead want the
+    history to run right up to the present so that console-injected life events
+    (which are dated from ``date.today()``) continue the same timeline: the
+    event consumer's trailing-window rules (salary-change etc.) can only compare
+    an injected credit against a baseline that falls inside their look-back
+    window. A 2-year gap between a fixed-2024 baseline and today-dated events
+    would leave every injected event with no baseline to deviate from.
+    """
+    return date.today() - timedelta(days=months * 30)
+
+
 async def _seed_persona(
     session: AsyncSession,
     persona: personas.Persona,
     *,
     months: int,
     seed: int,
+    history_start: date,
 ) -> dict[str, int] | None:
     """Seed one persona's Customer/Account/Transaction/Holding/Lead/Memory rows.
 
@@ -145,9 +162,9 @@ async def _seed_persona(
     session.add(account)
     await session.flush()
 
-    state = generator.new_state(persona, seed, start_date=generator.DEFAULT_HISTORY_START)
+    state = generator.new_state(persona, seed, start_date=history_start)
     txns = generator.generate_history(
-        persona, months, seed, state=state, start_date=generator.DEFAULT_HISTORY_START
+        persona, months, seed, state=state, start_date=history_start
     )
     if txns:
         rows = [
@@ -253,9 +270,12 @@ async def seed(
         await products.seed_catalog(session)
         await session.commit()
 
+        history_start = _history_start(months)
         cohort_personas = personas.make_cohort(cohort, seed_value)
         for persona in cohort_personas:
-            counts = await _seed_persona(session, persona, months=months, seed=seed_value)
+            counts = await _seed_persona(
+                session, persona, months=months, seed=seed_value, history_start=history_start
+            )
             if counts is None:
                 summary["skipped_existing"] += 1
                 continue

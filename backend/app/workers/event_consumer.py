@@ -84,6 +84,24 @@ async def _acquire_cooldown(customer_id: str, rule: str) -> bool:
     return bool(acquired)
 
 
+def _parse_event_ts(raw_ts: Any) -> datetime:
+    """Parse an envelope ``ts`` into a timezone-*aware* datetime.
+
+    Sim/generator (and console-injected) timestamps serialize without an offset,
+    so ``datetime.fromisoformat`` returns a naive value. Transactions loaded back
+    from Postgres, however, come back aware (the column is ``timestamptz``). The
+    deterministic prefilter mixes the just-created transaction with DB-loaded
+    history in the same window/sort, so a naive new-event ts against aware history
+    raises ``can't compare offset-naive and offset-aware datetimes`` and drops the
+    event (no rule ever fires). Normalizing the incoming ts to aware UTC keeps
+    every comparison on the same footing.
+    """
+    if not raw_ts:
+        return datetime.now(UTC)
+    ts = datetime.fromisoformat(str(raw_ts))
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+
+
 def _txn_to_txnlike(txn: Any) -> TxnLike:
     return TxnLike(
         ts=txn.ts,
@@ -129,8 +147,7 @@ async def process_envelope(envelope: dict[str, Any]) -> None:
             return
         account = accounts[0]
 
-        raw_ts = payload.get("ts")
-        ts = datetime.fromisoformat(str(raw_ts)) if raw_ts else datetime.now(UTC)
+        ts = _parse_event_ts(payload.get("ts"))
         txn = await ledger.post_transaction_idempotent(
             session,
             account_id=account.id,

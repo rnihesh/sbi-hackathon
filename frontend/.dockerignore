@@ -1,0 +1,21 @@
+# Build context = frontend/. Exclude anything the build regenerates or does
+# not need; node_modules and .next are rebuilt inside the image.
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Local env files (build-time config comes via the NEXT_PUBLIC_API_URL ARG)
+.env
+.env.*
+
+# Tooling / OS noise
+.git/
+.gitignore
+.DS_Store
+*.log
+npm-debug.log*
+.eslintcache
+.vscode/
+.idea/

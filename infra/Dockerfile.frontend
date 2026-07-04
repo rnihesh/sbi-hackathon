@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1
+#
+# Production image for the Sarathi frontend (Next.js 15 standalone output).
+#
+# Build context MUST be the frontend/ directory, e.g. from the repo root:
+#   docker build -f infra/Dockerfile.frontend \
+#     --build-arg NEXT_PUBLIC_API_URL=https://sarathi-api.niheshr.com \
+#     -t sarathi-frontend frontend/
+#
+# NEXT_PUBLIC_* values are inlined into the client bundle at build time, so the
+# API origin must be supplied as a build ARG (it cannot be changed at runtime).
+#
+# BUILDER NOTE: the build uses Turbopack (`next build --turbopack`), not Webpack.
+# On this Next 15.5.20 + React 19 app the Webpack production build, when run on
+# Linux, splits the client-context modules across server chunks such that the
+# React provider tree is not an ancestor of the page during SSR - every
+# server-rendered route then throws "must be used within a Provider" at request
+# time (the identical source builds correctly with Webpack on macOS, which is
+# why it is not caught in local dev). Turbopack produces a correct RSC/SSR
+# bundle on Linux. See infra/DEPLOY.md.
+
+# Pinned base: Node 24 (the repo's dev toolchain) on Debian slim (glibc).
+ARG NODE_IMAGE=node:24-slim
+
+# ---------------------------------------------------------------------------
+# Stage 1: deps - install node_modules from the frozen lockfile.
+# ---------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS deps
+WORKDIR /app
+# Pin pnpm to the version that authored pnpm-lock.yaml (lockfileVersion 9.0) so
+# the container resolves identically to local dev. An unpinned corepack pulls
+# pnpm@latest, whose minimumReleaseAge supply-chain gate rejects freshly
+# published lockfile entries and breaks --frozen-lockfile.
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+COPY package.json pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# ---------------------------------------------------------------------------
+# Stage 2: builder - compile the standalone production bundle (Turbopack).
+# ---------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS builder
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+# Baked into the client bundle. Defaults to localhost for local image builds;
+# override with --build-arg NEXT_PUBLIC_API_URL=https://sarathi-api.niheshr.com.
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN pnpm exec next build --turbopack
+
+# ---------------------------------------------------------------------------
+# Stage 3: runner - minimal image running the standalone server as non-root.
+# ---------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# `output: "standalone"` emits a trimmed server bundle (server.js + its own
+# minimal node_modules). Copy it plus the static assets and public files. The
+# node:slim image already ships a non-root `node` user.
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+
+USER node
+
+EXPOSE 3000
+
+# server.js is served on 0.0.0.0:3000; treat any <500 response to / as healthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e "require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+
+CMD ["node", "server.js"]

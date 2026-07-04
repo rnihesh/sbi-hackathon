@@ -595,7 +595,14 @@ async def get_costs(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> Cos
 # exactly as they would to organic sim traffic. Nothing about the pipeline is
 # faked; only the trigger is manual instead of time-based.
 
-_INJECT_WINDOW_DAYS = 60
+# 90 days (3 pay cycles), not 60: a job change skips one pay cycle for the
+# hand-over gap (see `_JobChange.apply`'s `salary_skip_cycles`), so the first
+# in-window salary is intentionally missing and the *new, higher* salary only
+# lands in the second post-injection cycle. A 60-day window ended right on that
+# second pay date's +/-2 day jitter, so the new-salary credit (the whole signal
+# a job change is supposed to produce) frequently fell just outside it and the
+# salary-change rule never saw the jump. 90 days guarantees it lands inside.
+_INJECT_WINDOW_DAYS = 90
 
 
 @router.post("/sim/inject-event", response_model=SimInjectEventResponse)

@@ -1,0 +1,138 @@
+# Sarathi production stack.
+#
+# Run from the repo root:
+#   docker compose -f infra/docker-compose.prod.yml build
+#   docker compose -f infra/docker-compose.prod.yml up -d
+#
+# Reads secrets/config from the repo-root .env (../.env). The `environment:`
+# blocks below override a handful of values so services talk over the internal
+# compose network (hosts `postgres` / `redis`, not localhost) and run in prod
+# mode. `environment` wins over `env_file`, so the localhost URLs in .env are
+# safely superseded here.
+#
+# Postgres and Redis ports are intentionally NOT published to the host: they are
+# reachable only inside the `sarathi` network. A reverse proxy (see DEPLOY.md)
+# fronts backend:8000 and frontend:3000 with TLS.
+
+# One backend image, three roles (api / worker / migrate), selected by command.
+x-backend-build: &backend-build
+  context: ../backend
+  dockerfile: ../infra/Dockerfile.backend
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sarathi
+      POSTGRES_PASSWORD: sarathi
+      POSTGRES_DB: sarathi
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sarathi -d sarathi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - sarathi
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - sarathi
+
+  # One-shot: apply Alembic migrations, then exit. Everything that touches the
+  # schema waits on this completing successfully.
+  migrate:
+    build: *backend-build
+    image: sarathi-backend:prod
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: postgresql+asyncpg://sarathi:sarathi@postgres:5432/sarathi
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sarathi
+
+  backend:
+    build: *backend-build
+    image: sarathi-backend:prod
+    restart: unless-stopped
+    # Default image CMD runs uvicorn (--proxy-headers, no reload).
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: postgresql+asyncpg://sarathi:sarathi@postgres:5432/sarathi
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    networks:
+      - sarathi
+
+  worker:
+    build: *backend-build
+    image: sarathi-backend:prod
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.event_consumer"]
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: postgresql+asyncpg://sarathi:sarathi@postgres:5432/sarathi
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - sarathi
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../infra/Dockerfile.frontend
+      args:
+        # Baked into the client bundle at build time. Must be the public API
+        # origin, not the compose-internal host.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://sarathi-api.niheshr.com}
+    image: sarathi-frontend:prod
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    networks:
+      - sarathi
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  sarathi:
+    driver: bridge

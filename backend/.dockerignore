@@ -1,0 +1,31 @@
+# Build context = backend/. Keep the image small and cache-friendly.
+
+# Python caches / build artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Local virtualenvs (rebuilt inside the image)
+.venv/
+venv/
+.env
+.env.*
+
+# Tooling / test caches (dev-only, not needed at runtime)
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+tests/
+htmlcov/
+.coverage
+coverage.xml
+
+# Editor / OS noise
+.git/
+.gitignore
+.DS_Store
+*.log

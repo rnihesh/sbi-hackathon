@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1
+#
+# Production image for the Sarathi backend.
+#
+# Build context MUST be the backend/ directory, e.g. from the repo root:
+#   docker build -f infra/Dockerfile.backend -t sarathi-backend backend/
+#
+# ONE image serves three roles (selected by the container command):
+#   - API server : uvicorn app.main:app        (default CMD below)
+#   - worker     : python -m app.workers.event_consumer
+#   - migrations : alembic upgrade head
+# The worker and migration one-shots reuse this same image with a different
+# command in docker-compose.prod.yml, so there is deliberately no separate
+# Dockerfile.worker.
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder - resolve and install dependencies with uv into a venv.
+# ---------------------------------------------------------------------------
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+
+# Byte-compile installed modules for faster cold start; copy (not hardlink)
+# from the cache mount so the venv is self-contained; never fetch a managed
+# Python (the base image already ships 3.12).
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=0
+
+WORKDIR /app
+
+# Install third-party dependencies first (their own cache layer) using only the
+# lockfile + project metadata, so app-code edits do not bust this layer.
+# uv.lock is present in the repo, so we can pin with --frozen.
+# README.md is referenced by pyproject `readme = "README.md"` and is needed
+# once the project itself is built.
+COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
+
+# Copy the application source and Alembic assets, then install the project
+# itself into the venv (production deps only, dev group excluded).
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime - slim image carrying only the venv and app source.
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim-bookworm AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/app/.venv/bin:$PATH"
+
+# Non-root runtime user (fixed uid/gid for predictable file ownership).
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin appuser
+
+WORKDIR /app
+
+# The venv is fully self-contained (UV_LINK_MODE=copy). Bring it plus the
+# source tree so both `uvicorn app.main:app` and `alembic upgrade head` work.
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+COPY --from=builder --chown=appuser:appuser /app/app /app/app
+COPY --from=builder --chown=appuser:appuser /app/alembic /app/alembic
+COPY --from=builder --chown=appuser:appuser /app/alembic.ini /app/alembic.ini
+
+USER appuser
+
+EXPOSE 8000
+
+# Hit the real health route. /healthz returns 200 only when DB + Redis are
+# reachable, and 503 otherwise; urlopen raises on 503, marking the container
+# unhealthy. Generous start-period covers first-boot migrations upstream.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"
+
+# Production server: no --reload. --proxy-headers + --forwarded-allow-ips=*
+# because it always sits behind the Caddy/nginx reverse proxy documented in
+# infra/DEPLOY.md.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
