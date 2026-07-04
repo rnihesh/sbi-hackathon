@@ -41,9 +41,19 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 - **Guardrails by design** - PII redaction before every LLM call (PAN/Aadhaar/phone),
   a compliance rule engine (mandated disclosures, no unapproved product claims), and an
   immutable, hash-chained audit log of every agent action.
-- **Vernacular chat** - customers pick a chat language (Hindi, Hinglish, Telugu, Tamil,
-  Kannada, Bengali, Marathi, or auto-detect) and every agent replies in it, with mandated
-  disclosures always staying in English.
+- **Vernacular chat + voice** - customers pick a chat language (Hindi, Hinglish, Telugu,
+  Tamil, Kannada, Bengali, Marathi, or auto-detect) and every agent replies in it, with
+  mandated disclosures always staying in English; voice input is available on the app.
+- **Self-service depth** - a products surface where a customer can apply for a product
+  (which routes into the same HITL approval queue), in-app notifications, guided
+  walkthroughs, and a customer-facing memory-transparency page showing what the system
+  remembers about them.
+- **Measured, not claimed** - a detection scorecard scores life-event detection against the
+  simulation's ground truth (precision / recall), with detection trends and proposal-outcome
+  analytics in the console.
+- **Budget-governed autonomy** - a daily LLM spend ceiling pauses the event pipeline at the
+  cap (user-facing chat is never blocked), alongside request rate limits and a console
+  budget-guard view.
 - **Provider-agnostic** - a thin multi-provider LLM router (OpenAI / Gemini / Anthropic)
   with policy tiers (cheap model for classification, strong for dialogue), automatic
   fallback, and a per-request cost ledger. Self-hosted models are pluggable for data
@@ -128,7 +138,15 @@ Then open the customer app at `http://localhost:3000` and the staff console at
 `http://localhost:3000/console`. See `infra/DEPLOY.md` for the real deployment runbook.
 
 To drive a live demo end to end (onboarding -> life-event injection -> approval -> trace),
-follow `docs/demo-script.md`.
+follow `docs/demo-script.md`, or use the built-in **Demo tour** (the presentation icon in the
+console top bar): an 8-step checklist with a narration line and a deep link per step.
+
+To verify a deployment without spending anything on LLMs, run the curl-based smoke checks
+(healthz, landing, manifest, docs, staff auth-gate, chat session create, and more):
+
+```bash
+bash scripts/prod-smoke.sh     # defaults to production; override with SARATHI_FE_URL / SARATHI_API_URL
+```
 
 ---
 
@@ -170,9 +188,12 @@ required for live agent calls.
 | `SES_FROM_ADDRESS` | `no-reply@niheshr.com` | Verified SES sender |
 | `STAFF_EMAILS` | empty | Console allowlist (comma-separated or JSON array); empty + `dev` = any authed user is staff |
 | `EVENT_COOLDOWN_SECONDS` | `300` | Min gap between agent runs per (customer, rule) |
+| `LLM_DAILY_BUDGET_USD` | `0.25` | Daily spend ceiling (UTC day); event-driven agent runs pause above it, chat is never blocked |
 
-Model ids, LLM timeouts, and JWT/OTP TTLs are also configurable; see
-`backend/app/core/config.py` for the full typed list.
+Model ids (e.g. `OPENAI_MODEL_SMART`), purpose-based provider routing
+(`LLM_PURPOSE_ROUTING`), LLM timeouts, request hardening (`MAX_REQUEST_BYTES`), and JWT/OTP
+TTLs are also configurable; see `backend/app/core/config.py` for the full typed list, and
+`infra/DEPLOY.md` for the dev-vs-prod env-var deltas.
 
 ---
 
@@ -193,7 +214,7 @@ backend/
     workers/           # event_consumer, prefilter, activity
     seed.py            # full-stack DB seeder
   alembic/             # migrations
-  tests/               # 219 tests (agents, api, auth, sim, workers, llm)
+  tests/               # 423 tests (agents, api, auth, sim, workers, llm)
 frontend/
   app/                 # (landing)/, app/ (customer), console/ (staff)
   components/          # shadcn/ui ported to the Aperture theme
@@ -206,8 +227,8 @@ docker-compose.yml     # dev infra: Postgres (pgvector) + Redis
 
 ## Quality bar
 
-- Backend: `ruff` clean, `mypy --strict` clean, `pytest` (219 tests) green.
-- Frontend: `tsc --noEmit` and `eslint` clean, responsive at 360 / 768 / 1280.
+- Backend: `ruff` clean, `mypy --strict` clean, `pytest` (423 tests) green.
+- Frontend: `tsc --noEmit`, `eslint`, and `next build` clean, responsive at 360 / 768 / 1280.
 - No em dashes anywhere (enforced by `make check`).
 - No demo shortcuts: every feature works end to end. Synthetic data is the only data
   source; all logic, agents, APIs, auth, and emails are real.
