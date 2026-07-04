@@ -24,13 +24,13 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: sarathi
-      POSTGRES_PASSWORD: sarathi
-      POSTGRES_DB: sarathi
+      POSTGRES_USER: ${POSTGRES_USER:-sarathi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a strong POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-sarathi}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sarathi -d sarathi"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sarathi} -d ${POSTGRES_DB:-sarathi}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -62,7 +62,7 @@ services:
       - ../.env
     environment:
       APP_ENV: prod
-      DATABASE_URL: postgresql+asyncpg://sarathi:sarathi@postgres:5432/sarathi
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sarathi}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sarathi}
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
@@ -79,7 +79,7 @@ services:
       - ../.env
     environment:
       APP_ENV: prod
-      DATABASE_URL: postgresql+asyncpg://sarathi:sarathi@postgres:5432/sarathi
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sarathi}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sarathi}
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
@@ -102,7 +102,7 @@ services:
       - ../.env
     environment:
       APP_ENV: prod
-      DATABASE_URL: postgresql+asyncpg://sarathi:sarathi@postgres:5432/sarathi
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sarathi}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sarathi}
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:

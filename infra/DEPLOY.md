@@ -33,6 +33,9 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 | --- | --- | --- | --- |
 | `APP_ENV` | `dev` | `prod` | Set by compose; gates the JWT-secret check. |
 | `JWT_SECRET` | `change-me` | (48-byte random) | Required in prod; use the command above. |
+| `POSTGRES_USER` | (unset, defaults `sarathi`) | `sarathi` | Compose substitutes into the postgres service and `DATABASE_URL`. |
+| `POSTGRES_PASSWORD` | (unset) | (strong random) | REQUIRED in prod; compose refuses to start without it. Same generator as `JWT_SECRET`. |
+| `POSTGRES_DB` | (unset, defaults `sarathi`) | `sarathi` | Database name. |
 | `BACKEND_URL` | `http://localhost:8000` | `https://sarathi-api.niheshr.com` | Used to build the OAuth callback URL. |
 | `FRONTEND_URL` | `http://localhost:3000` | `https://sarathi.niheshr.com` | OAuth success redirect target. |
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | `["https://sarathi.niheshr.com"]` | JSON list; must include the https app origin. |
