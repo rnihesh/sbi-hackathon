@@ -72,3 +72,36 @@ class NudgeListResponse(BaseModel):
 
 class NudgeActRequest(BaseModel):
     action: Literal["seen", "acted", "dismissed"] = Field(...)
+
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    kind: str
+    title: str
+    body: str
+    link: str | None
+    read: bool
+    created_at: datetime
+
+
+class NotificationListResponse(BaseModel):
+    notifications: list[NotificationOut]
+    unread: int
+
+
+class NotificationReadRequest(BaseModel):
+    """Mark notifications read by id, or every unread one with ``all=true``."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ids: list[uuid.UUID] = Field(default_factory=list)
+    # ``all`` shadows a builtin, so expose it under a safe attribute name while
+    # keeping the wire key ``all`` the frontend sends.
+    mark_all: bool = Field(default=False, alias="all")
+
+
+class NotificationReadResponse(BaseModel):
+    marked: int
+    unread: int

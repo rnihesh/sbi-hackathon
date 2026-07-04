@@ -14,6 +14,7 @@ from app.models.base import Base, TimestampMixin, UUIDPKMixin, enum_col
 from app.models.enums import (
     LifeEventStatus,
     LifeEventType,
+    NotificationKind,
     NudgeStatus,
     ProposalKind,
     ProposalStatus,
@@ -68,6 +69,36 @@ class Nudge(UUIDPKMixin, TimestampMixin, Base):
 
     customer: Mapped[Customer] = relationship(back_populates="nudges")
     proposal: Mapped[Proposal | None] = relationship(back_populates="nudges")
+
+
+class Notification(UUIDPKMixin, TimestampMixin, Base):
+    """A customer-facing notification: something real happened for this customer.
+
+    Created from genuine moments (an offer executed, a life event detected, an
+    account opened, a nudge delivered, demo activity readied), never synthesised.
+    ``link`` is an app-relative path (e.g. ``/app/nudges``) the client navigates
+    to on click.
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        # Serves the inbox query (newest-first for a customer) and the unread
+        # count without a separate index.
+        sa.Index("ix_notifications_customer_created", "customer_id", "created_at"),
+    )
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("customers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    kind: Mapped[NotificationKind] = enum_col(NotificationKind, nullable=False)
+    title: Mapped[str] = mapped_column(sa.String(200), nullable=False)
+    body: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    link: Mapped[str | None] = mapped_column(sa.String(300), nullable=True)
+    read: Mapped[bool] = mapped_column(
+        sa.Boolean, default=False, server_default=sa.false(), nullable=False
+    )
+
+    customer: Mapped[Customer] = relationship(back_populates="notifications")
 
 
 class LifeEvent(UUIDPKMixin, Base):

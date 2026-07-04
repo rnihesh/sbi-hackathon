@@ -10,6 +10,14 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 
+class CustomerSearchOut(BaseModel):
+    """One row of the staff customer-search picker (`GET /console/customers`)."""
+
+    id: uuid.UUID
+    full_name: str
+    city: str | None
+
+
 class LeadCustomerOut(BaseModel):
     id: uuid.UUID
     full_name: str
@@ -170,6 +178,21 @@ class CostsResponse(BaseModel):
     by_tier: list[CostBreakdownRow]
     by_purpose: list[CostBreakdownRow]
     last_24h: list[CostSeriesPoint]
+
+
+class WorkerHealthOut(BaseModel):
+    """Liveness of the `event_consumer` worker, derived from the `sarathi-agents`
+    consumer group on the `txn.events` Redis Stream (see `_worker_health`)."""
+
+    alive: bool
+    last_event_at: datetime | None
+    pending: int
+    dlq: int
+
+
+class ConsoleHealthResponse(BaseModel):
+    worker: WorkerHealthOut
+    api: str
 
 
 class SimInjectEventRequest(BaseModel):

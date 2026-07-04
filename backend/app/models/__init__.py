@@ -13,7 +13,7 @@ from app.models.catalog import Holding, Product
 from app.models.conversation import Conversation, Message
 from app.models.crm import Lead
 from app.models.customer import Customer
-from app.models.engagement import LifeEvent, Nudge, Proposal
+from app.models.engagement import LifeEvent, Notification, Nudge, Proposal
 from app.models.enums import (
     AccountStatus,
     AccountType,
@@ -30,6 +30,7 @@ from app.models.enums import (
     LlmTier,
     MemoryKind,
     MessageRole,
+    NotificationKind,
     NudgeStatus,
     ProposalKind,
     ProposalStatus,
@@ -69,6 +70,7 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     # engagement
     "Proposal",
     "Nudge",
+    "Notification",
     "LifeEvent",
     # audit
     "AuditLog",
@@ -91,6 +93,7 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     "LlmTier",
     "MemoryKind",
     "MessageRole",
+    "NotificationKind",
     "NudgeStatus",
     "ProposalKind",
     "ProposalStatus",

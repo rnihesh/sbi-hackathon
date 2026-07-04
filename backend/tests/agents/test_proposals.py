@@ -8,8 +8,8 @@ import sqlalchemy as sa
 import app.agents.entrypoints as ep
 from app.agents.actions import create_proposal
 from app.models.customer import Customer
-from app.models.engagement import Nudge, Proposal
-from app.models.enums import ProposalStatus
+from app.models.engagement import Notification, Nudge, Proposal
+from app.models.enums import NotificationKind, ProposalStatus
 
 
 async def test_execute_proposal_send_nudge(  # type: ignore[no-untyped-def]
@@ -43,6 +43,38 @@ async def test_execute_proposal_send_nudge(  # type: ignore[no-untyped-def]
             ).all()
         )
         assert len(nudges) == 1
+
+
+async def test_execute_proposal_notifies_customer(  # type: ignore[no-untyped-def]
+    db, sessionmaker_test, monkeypatch
+) -> None:
+    monkeypatch.setattr(ep, "get_sessionmaker", lambda: sessionmaker_test)
+
+    customer = Customer(full_name="Notified Customer")
+    db.add(customer)
+    await db.flush()
+    proposal = await create_proposal(
+        db, customer_id=customer.id, agent="engagement", kind="product_offer",
+        title="A pre-approved FD for you", body="Lock in a better rate.",
+        action={"kind": "product_offer", "product_code": "fd_std"},
+    )
+    await db.commit()
+
+    await ep.execute_proposal(str(proposal.id), approver="rm@bank.example")
+
+    async with sessionmaker_test() as session:
+        notes = list(
+            (
+                await session.scalars(
+                    sa.select(Notification).where(Notification.customer_id == customer.id)
+                )
+            ).all()
+        )
+    assert len(notes) == 1
+    assert notes[0].kind is NotificationKind.OFFER
+    assert notes[0].title == "A pre-approved FD for you"
+    assert notes[0].link == "/app/nudges"
+    assert notes[0].read is False
 
 
 async def test_execute_proposal_rejects_unknown_action(  # type: ignore[no-untyped-def]

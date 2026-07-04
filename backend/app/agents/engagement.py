@@ -26,8 +26,15 @@ from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
 from app.llm.base import ChatMessage
 from app.models.customer import Customer
 from app.models.engagement import LifeEvent
-from app.models.enums import AgentStepKind, LifeEventStatus, LifeEventType, ProposalKind
+from app.models.enums import (
+    AgentStepKind,
+    LifeEventStatus,
+    LifeEventType,
+    NotificationKind,
+    ProposalKind,
+)
 from app.services import ledger
+from app.services.notifications import notify
 
 AGENT_NAME = "engagement"
 NODE_NAME = "engagement"
@@ -43,6 +50,19 @@ _MERCHANT_GROUPS: dict[str, tuple[str, ...]] = {
     "travel": ("makemytrip", "irctc", "indigo", "vistara", "goibibo", "airbnb"),
 }
 _LIFE_EVENT_VALUES = [e.value for e in LifeEventType]
+
+# Warm, factual phrasing for the customer notification (never overclaims - each
+# is a "possible"/"signs of" read on their own activity, not a certainty).
+_LIFE_EVENT_PHRASE: dict[str, str] = {
+    "job_change": "signs of a job change",
+    "new_child": "signs of a new addition to your family",
+    "home_intent": "signs you may be planning for a home",
+    "bonus": "a possible bonus in your activity",
+    "salary_hike": "signs your income may have grown",
+    "marriage": "signs of wedding planning",
+    "relocation": "signs you may be relocating",
+    "travel": "signs of upcoming travel",
+}
 
 
 def _features_json(features: dict[str, Any]) -> str:
@@ -287,6 +307,15 @@ async def _record_life_event(ctx: AgentContext, state: AgentState, args: ToolArg
     await ctx.audit_record(
         "engagement", "life_event.recorded", "life_event", str(event.id),
         {"type": etype, "confidence": event.confidence},
+    )
+    phrase = _LIFE_EVENT_PHRASE.get(etype, "something worth a look in your recent activity")
+    await notify(
+        ctx.session,
+        ctx.customer_id,
+        NotificationKind.LIFE_EVENT,
+        "Sarathi noticed something",
+        f"We spotted {phrase}. Tap to see how Sarathi can help.",
+        link="/app/nudges",
     )
     append_structured(
         state, "life_events",

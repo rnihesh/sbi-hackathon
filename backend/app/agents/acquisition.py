@@ -22,8 +22,9 @@ from app.agents.supervisor import run_specialist
 from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
 from app.models.crm import Lead
 from app.models.customer import Customer
-from app.models.enums import LeadStage, MemoryKind
+from app.models.enums import LeadStage, MemoryKind, NotificationKind
 from app.services import kyc, ledger
+from app.services.notifications import notify
 from app.services.products import CustomerProfile, rank_products
 
 _PHONE_RE = re.compile(r"^(?:\+91[\-\s]?|0)?[6-9]\d{9}$")
@@ -242,6 +243,14 @@ async def _open_account(ctx: AgentContext, state: AgentState, args: ToolArgs) ->
     await ctx.audit_record(
         "acquisition", "account.opened", "account", str(account.id),
         {"customer_id": str(customer.id), "type": account_type, "initial_paise": initial},
+    )
+    await notify(
+        ctx.session,
+        customer.id,
+        NotificationKind.ACCOUNT,
+        "Your account is open",
+        f"Your new {account_type.replace('_', ' ')} account is ready to use.",
+        link="/app/home",
     )
     return {
         "opened": True,

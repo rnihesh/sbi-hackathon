@@ -17,8 +17,9 @@ from app.agents.context import AgentContext
 from app.agents.state import AgentState, append_proposal, append_structured, set_structured
 from app.agents.supervisor import run_specialist
 from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
-from app.models.enums import ProposalKind, TxnChannel
+from app.models.enums import NotificationKind, ProposalKind, TxnChannel
 from app.services import ledger, products
+from app.services.notifications import notify
 
 AGENT_NAME = "adoption"
 NODE_NAME = "adoption"
@@ -135,6 +136,14 @@ async def _draft_nudge(ctx: AgentContext, state: AgentState, args: ToolArgs) -> 
     )
     await ctx.audit_record(
         "adoption", "nudge.created", "nudge", str(nudge.id), {"title": nudge.title},
+    )
+    await notify(
+        ctx.session,
+        ctx.customer_id,
+        NotificationKind.NUDGE,
+        nudge.title,
+        nudge.body,
+        link="/app/nudges",
     )
     append_structured(state, "nudges", str(nudge.id))
     return {"nudge_id": str(nudge.id), "delivered": "in_app"}

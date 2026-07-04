@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from app.models.catalog import Holding
     from app.models.conversation import Conversation
     from app.models.crm import Lead
-    from app.models.engagement import LifeEvent, Nudge, Proposal
+    from app.models.engagement import LifeEvent, Notification, Nudge, Proposal
     from app.models.identity import User
     from app.models.memory import AgentMemory
     from app.models.tracing import AgentRun
@@ -70,6 +70,9 @@ class Customer(UUIDPKMixin, TimestampMixin, Base):
         back_populates="customer", cascade="all, delete-orphan"
     )
     nudges: Mapped[list[Nudge]] = relationship(
+        back_populates="customer", cascade="all, delete-orphan"
+    )
+    notifications: Mapped[list[Notification]] = relationship(
         back_populates="customer", cascade="all, delete-orphan"
     )
     life_events: Mapped[list[LifeEvent]] = relationship(

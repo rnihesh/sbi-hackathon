@@ -32,10 +32,11 @@ from app.llm.base import ChatMessage
 from app.llm.router import LLMRouter, get_router
 from app.models.banking import Account, Transaction
 from app.models.customer import Customer
-from app.models.enums import AccountStatus, AccountType, DigitalMaturity
+from app.models.enums import AccountStatus, AccountType, DigitalMaturity, NotificationKind
 from app.models.identity import User
 from app.seed import _SEGMENT_BY_ARCHETYPE, _history_start
 from app.services import products
+from app.services.notifications import notify
 from app.sim import generator, personas
 from app.sim.generator import Channel, Direction, Txn, to_envelope
 
@@ -319,6 +320,16 @@ async def load_demo_activity(
         events_published = len(burst)
     except Exception:
         logger.warning("demo_activity_publish_failed", customer_id=str(customer.id))
+
+    await notify(
+        db,
+        customer.id,
+        NotificationKind.SYSTEM,
+        "Your demo activity is ready",
+        "We set up months of sample transactions and insights. Explore your dashboard, "
+        "then check back for nudges as Sarathi reads your activity.",
+        link="/app/home",
+    )
 
     logger.info(
         "demo_activity_loaded",

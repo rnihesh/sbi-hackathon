@@ -133,6 +133,16 @@ class LifeEventStatus(StrEnum):
     DISMISSED = "dismissed"
 
 
+class NotificationKind(StrEnum):
+    """A customer-facing notification's category (drives its icon and copy)."""
+
+    OFFER = "offer"
+    LIFE_EVENT = "life_event"
+    ACCOUNT = "account"
+    NUDGE = "nudge"
+    SYSTEM = "system"
+
+
 class MemoryKind(StrEnum):
     EPISODIC = "episodic"
     FACT = "fact"

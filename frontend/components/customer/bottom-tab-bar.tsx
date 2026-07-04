@@ -6,10 +6,12 @@ import { motion } from "framer-motion"
 
 import { cn } from "@/lib/utils"
 import { navPillTransition } from "@/lib/motion"
+import { useNotifications } from "@/lib/notifications"
 import { CUSTOMER_TABS } from "@/components/customer/tabs"
 
 export function BottomTabBar() {
   const pathname = usePathname()
+  const { nudgeUnread } = useNotifications()
 
   return (
     <nav
@@ -20,6 +22,7 @@ export function BottomTabBar() {
         {CUSTOMER_TABS.map((tab) => {
           const isActive = pathname === tab.href
           const Icon = tab.icon
+          const badge = tab.href === "/app/nudges" ? nudgeUnread : 0
           return (
             <li key={tab.href} className="flex-1">
               <Link
@@ -40,12 +43,22 @@ export function BottomTabBar() {
                     isActive && "text-accent-foreground"
                   )}
                 >
-                  <Icon
-                    className={cn(
-                      "size-5 transition-transform duration-200",
-                      isActive && "scale-110"
+                  <span className="relative">
+                    <Icon
+                      className={cn(
+                        "size-5 transition-transform duration-200",
+                        isActive && "scale-110"
+                      )}
+                    />
+                    {badge > 0 && (
+                      <span
+                        className="absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-none text-primary-foreground ring-2 ring-background"
+                        aria-label={`${badge} unread`}
+                      >
+                        {badge > 9 ? "9+" : badge}
+                      </span>
                     )}
-                  />
+                  </span>
                   {tab.label}
                 </span>
               </Link>

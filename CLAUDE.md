@@ -13,3 +13,4 @@ Hard rules:
 - Frontend: Next.js 15 App Router, TypeScript, Tailwind, shadcn/ui, framer-motion, pnpm.
 - LLM calls only via `app/llm/router.py` policy tiers (`fast`/`smart`) - never instantiate provider SDKs elsewhere.
 - NO em dashes (U+2014) anywhere: code, comments, UI strings, docs, commit messages. Use hyphens or restructure the sentence. `make check` enforces this.
+- HARD BUDGET: the OpenAI org has a tiny spend cap. NEVER make live LLM calls during development or testing - FakeRouter/fakes only, always. Live verification happens once per iteration, run ONLY by the advisor session, minimal and preferring Gemini. If your task seems to need a live call, report that instead of making it.

@@ -39,9 +39,11 @@ from app.models.enums import (
     AgentTriggerType,
     HoldingStatus,
     MessageRole,
+    NotificationKind,
     ProposalStatus,
 )
 from app.services import products
+from app.services.notifications import notify
 
 logger = get_logger(__name__)
 
@@ -292,6 +294,17 @@ async def execute_proposal(proposal_id: str, approver: str) -> ProposalExecution
         action = proposal.action or {}
         kind = str(action.get("kind", proposal.kind.value))
         detail = await _dispatch_action(session, proposal, action, kind)
+
+        # An approved+executed proposal is a real offer landing for the customer -
+        # tell them (mirrors the already-generated proposal copy, no LLM call).
+        await notify(
+            session,
+            proposal.customer_id,
+            NotificationKind.OFFER,
+            proposal.title,
+            proposal.body,
+            link="/app/nudges",
+        )
 
         proposal.status = ProposalStatus.EXECUTED
         proposal.decided_by = approver

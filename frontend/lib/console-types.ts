@@ -7,7 +7,10 @@ export interface FeedItem {
   ts: string
   customer_id: string | null
   summary: string
-  ref_id: string
+  // Mirrors `app.workers.activity.publish_activity` exactly - `ref_id` is `None`
+  // (not merely absent) for some envelopes (e.g. the sim life-event injector's
+  // "injected" marker), so this is nullable, not just optional.
+  ref_id: string | null
 }
 
 export interface ProposalCustomer {
@@ -25,6 +28,33 @@ export interface Proposal {
   action: Record<string, unknown>
   status: "pending" | "approved" | "rejected" | "executed"
   created_at: string
+}
+
+/** Mirrors `app.schemas.console.ProposalActionResult` - the executed-action
+ * detail returned by `POST /console/proposals/{id}/approve`. */
+export interface ProposalActionResult {
+  proposal_id: string
+  action_kind: string
+  status: string
+  detail: Record<string, unknown>
+}
+
+/** Mirrors `app.schemas.console.CustomerSearchOut` (`GET /console/customers`). */
+export interface CustomerSearchResult {
+  id: string
+  full_name: string
+  city: string | null
+}
+
+/** Mirrors `app.schemas.console.ConsoleHealthResponse` (`GET /console/health`). */
+export interface ConsoleHealth {
+  worker: {
+    alive: boolean
+    last_event_at: string | null
+    pending: number
+    dlq: number
+  }
+  api: string
 }
 
 export interface LeadCustomer {

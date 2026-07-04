@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.banking import Account, Transaction
 from app.models.conversation import Conversation, Message
+from app.models.engagement import Notification
+from app.models.enums import NotificationKind
 from app.services.products import seed_catalog
 from tests.agents.conftest import FakeRouter, ScriptedHandler, make_response
 
@@ -74,6 +76,16 @@ async def test_demo_activity_fills_account_then_409(
         .where(Account.customer_id == customer.id)
     )
     assert int(txn_count or 0) == body["transactions"]
+
+    # Demo readiness is a real customer moment - a system notification lands.
+    note = (
+        await db.execute(
+            select(Notification).where(Notification.customer_id == customer.id)
+        )
+    ).scalar_one()
+    assert note.kind is NotificationKind.SYSTEM
+    assert note.title == "Your demo activity is ready"
+    assert note.read is False
 
     # Profile isolation: demo activity must NOT overwrite the real identity
     # columns - only the persona JSON and digital maturity are set.
