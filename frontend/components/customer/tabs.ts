@@ -13,3 +13,13 @@ export const CUSTOMER_TABS: CustomerTab[] = [
   { href: "/app/nudges", label: "Nudges", icon: Bell },
   { href: "/app/profile", label: "Profile", icon: User },
 ]
+
+/** Page title for the mobile top bar's center slot, derived from the current
+ * pathname - `null` for anything outside the five tabs (so the bar falls
+ * back to just showing the wordmark). */
+export function pageTitleForPath(pathname: string): string | null {
+  const tab = CUSTOMER_TABS.find(
+    (t) => pathname === t.href || pathname.startsWith(`${t.href}/`)
+  )
+  return tab?.label ?? null
+}

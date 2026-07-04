@@ -161,6 +161,11 @@ export default function ChatPage() {
     const controller = new AbortController()
     abortControllerRef.current = controller
 
+    // Hoisted out of the `try` below so the `catch` can still target the
+    // right conversation's draft key on failure (a brand-new conversation's
+    // id is only known once the POST to create it resolves).
+    let convId = conversationId
+
     function ensurePlaceholder() {
       if (placedPlaceholder) return
       placedPlaceholder = true
@@ -178,7 +183,6 @@ export default function ChatPage() {
     }
 
     try {
-      let convId = conversationId
       if (!convId) {
         const created = await api.post<{ conversation_id: string }>(
           `${API_V1}/chat/sessions`,
@@ -294,6 +298,13 @@ export default function ChatPage() {
           updateMessage(assistantId, { streamError: message, retryText: text })
         } else {
           replaceWithError(message)
+        }
+        // Rate-limited: the message never actually sent, so put it back in the
+        // composer (and persist it as the draft) instead of only relying on
+        // the error bubble's Retry button - nothing typed should feel lost.
+        if (err instanceof ApiError && err.status === 429) {
+          setInput(text)
+          saveDraft(convId, text)
         }
       }
     } finally {

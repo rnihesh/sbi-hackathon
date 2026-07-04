@@ -5,7 +5,7 @@ import { AnimatePresence } from "framer-motion"
 import { CheckCheck } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, API_V1, ApiError } from "@/lib/api"
+import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
 import type { Proposal, ProposalActionResult } from "@/lib/console-types"
 import { ConsolePageHeader } from "@/components/console/page-header"
 import { ListRowSkeleton } from "@/components/console/list-row-skeleton"
@@ -77,7 +77,7 @@ export default function ApprovalsPage() {
       setProposals((prev) => prev?.filter((p) => p.id !== id) ?? null)
       toast.success("Proposal approved", { description: describeApprovalResult(result) })
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't approve that proposal")
+      toast.error(describeApiError(err, "Couldn't approve that proposal"))
     } finally {
       busyRef.current.delete(id)
       setBusy(id, false)
@@ -93,7 +93,7 @@ export default function ApprovalsPage() {
       setProposals((prev) => prev?.filter((p) => p.id !== id) ?? null)
       toast.success("Proposal rejected")
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't reject that proposal")
+      toast.error(describeApiError(err, "Couldn't reject that proposal"))
     } finally {
       busyRef.current.delete(id)
       setBusy(id, false)

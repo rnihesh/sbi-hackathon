@@ -9,7 +9,7 @@ import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/brow
 import { Fingerprint, KeyRound, Loader2, Mail } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, API_URL, API_V1, ApiError } from "@/lib/api"
+import { api, API_URL, API_V1, describeApiError } from "@/lib/api"
 import { useMe, type MeResponse } from "@/lib/auth"
 import { fadeIn } from "@/lib/motion"
 import { Button } from "@/components/ui/button"
@@ -85,7 +85,7 @@ export function SignInSheet({
       if (err instanceof DOMException && err.name === "NotAllowedError") {
         // User dismissed the passkey prompt - no error toast needed.
       } else {
-        toast.error(err instanceof ApiError ? err.message : "Passkey sign-in failed")
+        toast.error(describeApiError(err, "Passkey sign-in failed"))
       }
     } finally {
       setLoading(null)
@@ -103,7 +103,7 @@ export function SignInSheet({
       setStep("otp-code")
       toast.success("Code sent", { description: `Check ${email} for a 6-digit code.` })
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't send the code")
+      toast.error(describeApiError(err, "Couldn't send the code"))
     } finally {
       setLoading(null)
     }
@@ -123,7 +123,7 @@ export function SignInSheet({
       })
       onSignedIn(me)
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Invalid or expired code")
+      toast.error(describeApiError(err, "Invalid or expired code"))
       setCode("")
     } finally {
       setLoading(null)

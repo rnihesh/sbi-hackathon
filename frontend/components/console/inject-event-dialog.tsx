@@ -5,7 +5,7 @@ import { Check, ChevronsUpDown, Loader2, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
-import { api, API_V1, ApiError } from "@/lib/api"
+import { api, API_V1, describeApiError } from "@/lib/api"
 import type { CustomerSearchResult } from "@/lib/console-types"
 import { Button } from "@/components/ui/button"
 import {
@@ -123,7 +123,7 @@ export function InjectEventDialog() {
       })
       resetAndClose()
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't inject that event")
+      toast.error(describeApiError(err, "Couldn't inject that event"))
     } finally {
       submittingRef.current = false
       setSubmitting(false)

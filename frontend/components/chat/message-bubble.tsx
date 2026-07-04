@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { AlertCircle, RotateCw } from "lucide-react"
@@ -10,15 +11,13 @@ import { ToolActivityChip } from "@/components/chat/tool-activity-chip"
 import { StructuredCard } from "@/components/chat/structured-card"
 import type { ChatMessage, ProductOffer } from "@/lib/chat-types"
 
-export function MessageBubble({
-  message,
-  onRetry,
-  onOfferCta,
-}: {
+interface MessageBubbleProps {
   message: ChatMessage
   onRetry?: () => void
   onOfferCta?: (offer: ProductOffer) => void
-}) {
+}
+
+function MessageBubbleImpl({ message, onRetry, onOfferCta }: MessageBubbleProps) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -112,3 +111,30 @@ export function MessageBubble({
     </div>
   )
 }
+
+/**
+ * Every token event during streaming re-renders `ChatPage`, which maps over
+ * the full `messages` array - without memoizing bubbles, every past message
+ * (including its Markdown parse) would re-render on every single token.
+ * `updateMessage` only replaces the *one* message object it patches (see
+ * `chat/page.tsx`), so unrelated bubbles keep the same `message` reference
+ * across renders; this comparator lets `React.memo` bail out for those.
+ * `onRetry`/`onOfferCta` are deliberately excluded - they're fresh closures
+ * every render, but their behavior is fully determined by `message` (already
+ * compared) and stable outer handlers, so comparing them would defeat the
+ * memoization without avoiding any real staleness.
+ */
+function messageBubblePropsEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
+  const a = prev.message
+  const b = next.message
+  return (
+    a.content === b.content &&
+    a.isError === b.isError &&
+    a.streamError === b.streamError &&
+    a.retryText === b.retryText &&
+    a.toolActivity === b.toolActivity &&
+    a.structured === b.structured
+  )
+}
+
+export const MessageBubble = React.memo(MessageBubbleImpl, messageBubblePropsEqual)

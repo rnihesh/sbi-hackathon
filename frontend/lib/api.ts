@@ -32,12 +32,24 @@ const NO_AUTH_RETRY_SUFFIXES = [
 export class ApiError extends Error {
   readonly status: number
   readonly body: unknown
+  /** Present when the backend's error envelope carried a `request_id` - shown
+   * subtly in error toasts so a user can reference it when reporting an issue. */
+  readonly requestId?: string
+  /** Present on 429s - seconds the caller should wait before retrying. */
+  readonly retryAfterSeconds?: number
 
-  constructor(message: string, status: number, body: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    body: unknown,
+    opts: { requestId?: string; retryAfterSeconds?: number } = {}
+  ) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.body = body
+    this.requestId = opts.requestId
+    this.retryAfterSeconds = opts.retryAfterSeconds
   }
 }
 
@@ -49,8 +61,71 @@ interface RequestOptions extends Omit<RequestInit, "body"> {
   skipAuthRetry?: boolean
 }
 
-function hasDetail(value: unknown): value is { detail: unknown } {
-  return typeof value === "object" && value !== null && "detail" in value
+/**
+ * Backend error envelope (hardening wave): `{"error": {code, message,
+ * request_id, retry_after_seconds}, "detail": "..."}` - `detail` is kept as a
+ * compat alias by the backend, so it's read as a fallback when `error` is
+ * absent (or mid-rollout on an endpoint that hasn't adopted the envelope yet).
+ */
+interface ErrorEnvelope {
+  error?: {
+    code?: string
+    message?: string
+    request_id?: string
+    retry_after_seconds?: number
+  }
+  detail?: unknown
+  /** Some backends surface this top-level instead of nested under `error`. */
+  retry_after_seconds?: number
+}
+
+function asErrorEnvelope(value: unknown): ErrorEnvelope | null {
+  return typeof value === "object" && value !== null ? (value as ErrorEnvelope) : null
+}
+
+function extractErrorMessage(payload: unknown, fallback: string): string {
+  const envelope = asErrorEnvelope(payload)
+  if (envelope?.error?.message) return envelope.error.message
+  if (typeof envelope?.detail === "string") return envelope.detail
+  return fallback
+}
+
+function extractRequestId(payload: unknown): string | undefined {
+  return asErrorEnvelope(payload)?.error?.request_id
+}
+
+/** Parses how long to wait before retrying a 429 - checks the JSON body first
+ * (either location the envelope might carry it), then falls back to the
+ * standard `Retry-After` header (seconds, or an HTTP date). */
+function parseRetryAfterSeconds(res: Response, payload: unknown): number | undefined {
+  const envelope = asErrorEnvelope(payload)
+  const fromBody = envelope?.error?.retry_after_seconds ?? envelope?.retry_after_seconds
+  if (typeof fromBody === "number" && Number.isFinite(fromBody)) {
+    return Math.max(0, Math.round(fromBody))
+  }
+
+  const header = res.headers.get("Retry-After")
+  if (!header) return undefined
+  const asSeconds = Number(header)
+  if (Number.isFinite(asSeconds)) return Math.max(0, Math.round(asSeconds))
+  const asDate = Date.parse(header)
+  if (!Number.isNaN(asDate)) {
+    const seconds = Math.round((asDate - Date.now()) / 1000)
+    return seconds > 0 ? seconds : undefined
+  }
+  return undefined
+}
+
+function rateLimitedError(res: Response, payload: unknown): ApiError {
+  const retryAfterSeconds = parseRetryAfterSeconds(res, payload)
+  const message =
+    retryAfterSeconds !== undefined
+      ? `Too many requests - try again in ${retryAfterSeconds}s`
+      : "Too many requests - try again shortly."
+  return new ApiError(message, res.status, payload, {
+    requestId: extractRequestId(payload),
+    retryAfterSeconds,
+  })
 }
 
 let refreshInFlight: Promise<boolean> | null = null
@@ -110,11 +185,25 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       notifySessionExpired()
     }
 
-    const message = hasDetail(payload) ? String(payload.detail) : res.statusText
-    throw new ApiError(message, res.status, payload)
+    if (res.status === 429) throw rateLimitedError(res, payload)
+
+    throw new ApiError(extractErrorMessage(payload, res.statusText), res.status, payload, {
+      requestId: extractRequestId(payload),
+    })
   }
 
   return payload as T
+}
+
+/** Formats an error for a toast/inline message - `ApiError`s from the backend
+ * envelope get a subtle "(ref: abc123)" suffix when a `request_id` came back,
+ * so a user reporting an issue can quote something traceable in the logs.
+ * Falls back to `fallback` for anything that isn't an `ApiError`. */
+export function describeApiError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    return err.requestId ? `${err.message} (ref: ${err.requestId})` : err.message
+  }
+  return fallback
 }
 
 export const api = {
@@ -204,7 +293,19 @@ export async function sseStream(
       }
       notifySessionExpired()
     }
-    throw new ApiError(`SSE request failed: ${res.statusText}`, res.status, undefined)
+
+    // A rejected SSE request still arrives as a normal JSON error body (the
+    // stream never actually opens) - parse it so a rate-limited chat send
+    // surfaces the same friendly "try again in Xs" message as a REST call.
+    const payload: unknown = await res.json().catch(() => undefined)
+    if (res.status === 429) throw rateLimitedError(res, payload)
+
+    throw new ApiError(
+      extractErrorMessage(payload, `SSE request failed: ${res.statusText}`),
+      res.status,
+      payload,
+      { requestId: extractRequestId(payload) }
+    )
   }
 
   onOpen?.()

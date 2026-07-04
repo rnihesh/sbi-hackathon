@@ -6,7 +6,7 @@ import { AnimatePresence } from "framer-motion"
 import { PartyPopper, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, API_V1, ApiError } from "@/lib/api"
+import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
 import { ctaUrl } from "@/lib/customer-types"
 import type { DashboardResponse, Nudge } from "@/lib/customer-types"
 import { Card, CardContent } from "@/components/ui/card"
@@ -85,7 +85,7 @@ export default function NudgesPage() {
       await api.post(`${API_V1}/me/nudges/${id}/act`, { action })
     } catch (err) {
       if (action !== "seen") {
-        toast.error(err instanceof ApiError ? err.message : "Couldn't update that nudge")
+        toast.error(describeApiError(err, "Couldn't update that nudge"))
       }
       throw err
     }

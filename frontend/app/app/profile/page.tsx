@@ -19,7 +19,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, API_V1, ApiError } from "@/lib/api"
+import { api, API_V1, describeApiError } from "@/lib/api"
 import { useMe } from "@/lib/auth"
 import { useTheme } from "next-themes"
 import { springSoft } from "@/lib/motion"
@@ -128,7 +128,7 @@ export default function ProfilePage() {
       } else if (isDuplicatePasskeyError(err)) {
         toast.error("A passkey for this account already exists on this device")
       } else {
-        toast.error(err instanceof ApiError ? err.message : "Couldn't add that passkey")
+        toast.error(describeApiError(err, "Couldn't add that passkey"))
       }
     } finally {
       setAddingPasskey(false)
@@ -144,7 +144,7 @@ export default function ProfilePage() {
       toast.success("Passkey removed")
       setPendingRemoval(null)
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't remove that passkey")
+      toast.error(describeApiError(err, "Couldn't remove that passkey"))
     } finally {
       setRemovingPasskey(false)
     }

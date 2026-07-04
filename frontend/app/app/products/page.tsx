@@ -15,7 +15,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, API_V1, ApiError } from "@/lib/api"
+import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { humanizeIdentifier } from "@/lib/format"
 import { staggerContainer, staggerItem } from "@/lib/motion"
@@ -35,8 +35,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Skeleton } from "@/components/ui/skeleton"
 import { SarathiMark } from "@/components/brand/logo"
+import { ProductsSkeleton } from "@/components/customer/products-skeleton"
 
 interface CategoryMeta {
   label: string
@@ -95,7 +95,7 @@ export default function ProductsPage() {
         description: `A relationship manager will review your request for ${item.name}.`,
       })
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't send that request")
+      toast.error(describeApiError(err, "Couldn't send that request"))
     } finally {
       setBusyCode(null)
     }
@@ -249,28 +249,5 @@ function ProductCard({
         </CardContent>
       </Card>
     </motion.div>
-  )
-}
-
-function ProductsSkeleton() {
-  return (
-    <div className="flex flex-col gap-8">
-      {Array.from({ length: 2 }).map((_, g) => (
-        <div key={g} className="flex flex-col gap-3">
-          <Skeleton className="h-4 w-24" />
-          <div className="grid gap-3 sm:grid-cols-2">
-            {Array.from({ length: 2 }).map((_, i) => (
-              <Card key={i}>
-                <CardContent className="flex flex-col gap-2">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-1/2" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
   )
 }

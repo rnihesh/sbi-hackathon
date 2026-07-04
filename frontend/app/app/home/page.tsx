@@ -6,7 +6,7 @@ import { motion } from "framer-motion"
 import { ArrowDownLeft, ArrowUpRight, Bell, ChevronRight, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, API_V1, ApiError } from "@/lib/api"
+import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
 import { useMe } from "@/lib/auth"
 import { staggerContainer, staggerItem } from "@/lib/motion"
 import { formatPaise, formatRelativeTime, humanizeIdentifier, timeOfDayGreeting } from "@/lib/format"
@@ -15,8 +15,8 @@ import type { DashboardResponse } from "@/lib/customer-types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Skeleton } from "@/components/ui/skeleton"
 import { SarathiMark } from "@/components/brand/logo"
+import { HomeSkeleton } from "@/components/customer/home-skeleton"
 
 export default function HomePage() {
   const { me } = useMe()
@@ -53,7 +53,7 @@ export default function HomePage() {
       })
       await fetchDashboard()
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't load demo activity")
+      toast.error(describeApiError(err, "Couldn't load demo activity"))
     } finally {
       setLoadingDemo(false)
     }
@@ -240,25 +240,5 @@ function EmptyPanel({ label }: { label: string }) {
     <Card>
       <CardContent className="text-sm text-muted-foreground">{label}</CardContent>
     </Card>
-  )
-}
-
-function HomeSkeleton() {
-  return (
-    <div className="flex flex-col gap-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Balance</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <Skeleton className="h-8 w-32" />
-          <Skeleton className="h-4 w-48" />
-        </CardContent>
-      </Card>
-      <div className="flex flex-col gap-3">
-        <Skeleton className="h-4 w-28" />
-        <Skeleton className="h-40 w-full rounded-xl" />
-      </div>
-    </div>
   )
 }
