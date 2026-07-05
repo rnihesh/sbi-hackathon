@@ -18,6 +18,11 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents import memory
 from app.agents.context import AgentContext
+from app.agents.handoff_tools import (
+    HANDOFF_BACKSTOP_NUDGE,
+    HANDOFF_TOOL_GUIDANCE,
+    handoff_backstop_triggered,
+)
 from app.agents.language import language_directive
 from app.agents.state import AgentState, ChatTurn
 from app.agents.toolkit import Tool, run_agent_loop, stream_final_answer
@@ -81,6 +86,14 @@ async def supervisor_node(state: AgentState, config: RunnableConfig) -> dict[str
     await ctx.emit({"type": "agent", "agent": "supervisor", "node": "supervisor"})
 
     intent = await _classify(ctx, text)
+
+    # Deterministic handoff backstop: an unambiguous "talk to a human" / complaint /
+    # fraud message must reach a tool-capable specialist (small talk has no tools).
+    # We only re-route here (to engagement, a handoff-capable specialist) and let the
+    # LLM decide to call request_human_handoff - the actual nudge is injected in
+    # run_specialist. The row is never auto-created deterministically.
+    if handoff_backstop_triggered(text) and intent == "smalltalk":
+        intent = "engagement"
 
     # Guard: specialist paths that need an existing customer fall back to acquisition.
     needs_customer = intent in ("adoption", "engagement")
@@ -206,6 +219,12 @@ async def run_specialist(
     facts_line = memory.known_facts_directive(profile)
     if facts_line:
         system = f"{system}\n\n{facts_line}"
+    # Every specialist shares the human-handoff tool, so the escalation guidance is
+    # appended centrally too. When the deterministic backstop fires on this turn's
+    # message, a stronger nudge is added so the model calls request_human_handoff.
+    system = f"{system}\n\n{HANDOFF_TOOL_GUIDANCE}"
+    if handoff_backstop_triggered(_classify_text(state)):
+        system = f"{system}\n\n{HANDOFF_BACKSTOP_NUDGE}"
     draft = await run_agent_loop(
         ctx,
         state,

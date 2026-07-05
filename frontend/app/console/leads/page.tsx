@@ -1,8 +1,11 @@
 "use client"
 
 import * as React from "react"
+import { Download } from "lucide-react"
+import { toast } from "sonner"
 
 import { api, API_V1, ApiError } from "@/lib/api"
+import { downloadFile } from "@/lib/download"
 import { formatRelativeTime, humanizeIdentifier } from "@/lib/format"
 import { normalizeLead } from "@/lib/console-types"
 import type { Lead } from "@/lib/console-types"
@@ -10,6 +13,7 @@ import { ConsolePageHeader } from "@/components/console/page-header"
 import { CustomerLink } from "@/components/console/customer-link"
 import { IntentScoreBar } from "@/components/console/intent-score-bar"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
@@ -32,6 +36,18 @@ function LeadName({ lead }: { lead: Lead }) {
 export default function LeadsPage() {
   const [leads, setLeads] = React.useState<Lead[] | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const [downloading, setDownloading] = React.useState(false)
+
+  async function handleDownload() {
+    setDownloading(true)
+    try {
+      await downloadFile(`${API_V1}/console/export/leads.csv`, "leads.csv")
+    } catch {
+      toast.error("Couldn't download leads")
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   React.useEffect(() => {
     let cancelled = false
@@ -55,6 +71,18 @@ export default function LeadsPage() {
       <ConsolePageHeader
         title="Leads"
         description="Acquisition candidates surfaced by the AcquisitionAgent."
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5"
+            disabled={downloading}
+            onClick={() => void handleDownload()}
+          >
+            <Download className="size-3.5" />
+            Download CSV
+          </Button>
+        }
       />
 
       {error && (

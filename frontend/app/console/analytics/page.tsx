@@ -1,8 +1,11 @@
 "use client"
 
 import * as React from "react"
+import { Download } from "lucide-react"
+import { toast } from "sonner"
 
 import { api, API_V1, ApiError } from "@/lib/api"
+import { downloadFile } from "@/lib/download"
 import { formatSecondsHuman } from "@/lib/format"
 import type {
   DetectionResponse,
@@ -14,7 +17,8 @@ import { StatTile } from "@/components/console/stat-tile"
 import { DetectionScorecard } from "@/components/console/detection-scorecard"
 import { MetricSparklines } from "@/components/console/metric-sparklines"
 import { ProposalOutcomeBars } from "@/components/console/proposal-outcome-bars"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
 const TIMESERIES_DAYS = 14
@@ -45,10 +49,12 @@ function useAnalytics<T>(path: string, fallback: string): [T | null, string | nu
 function SectionCard({
   title,
   description,
+  actions,
   children,
 }: {
   title: string
   description?: string
+  actions?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -56,6 +62,7 @@ function SectionCard({
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}
+        {actions && <CardAction>{actions}</CardAction>}
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>
@@ -86,6 +93,18 @@ export default function AnalyticsPage() {
     `${API_V1}/console/analytics/proposals`,
     "Couldn't load proposal outcomes."
   )
+  const [downloadingDetection, setDownloadingDetection] = React.useState(false)
+
+  async function handleDownloadDetection() {
+    setDownloadingDetection(true)
+    try {
+      await downloadFile(`${API_V1}/console/export/detection.csv`, "detection.csv")
+    } catch {
+      toast.error("Couldn't download the detection scorecard")
+    } finally {
+      setDownloadingDetection(false)
+    }
+  }
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
@@ -97,6 +116,18 @@ export default function AnalyticsPage() {
       <SectionCard
         title="Detection accuracy"
         description="Injected life events vs. what the agent mesh detected, with match and lag."
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5"
+            disabled={downloadingDetection}
+            onClick={() => void handleDownloadDetection()}
+          >
+            <Download className="size-3.5" />
+            Download CSV
+          </Button>
+        }
       >
         {detection ? (
           <DetectionScorecard data={detection} />

@@ -115,6 +115,24 @@ class NotificationReadResponse(BaseModel):
     unread: int
 
 
+class ActivityItemOut(BaseModel):
+    """One entry in the ``GET /me/activity`` account activity log.
+
+    ``action`` is a short, humanised label (e.g. "Account opened"); ``summary`` is a
+    one-line, plain-language sentence with the specifics (e.g. "Your savings account
+    was opened."). See ``app.api.v1.customers`` for exactly which audit-log actions are
+    surfaced here and why the rest are excluded.
+    """
+
+    ts: datetime
+    action: str
+    summary: str
+
+
+class ActivityResponse(BaseModel):
+    activity: list[ActivityItemOut]
+
+
 class PreferencesUpdateRequest(BaseModel):
     """Body for ``PATCH /me/preferences``.
 

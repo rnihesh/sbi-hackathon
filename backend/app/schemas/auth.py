@@ -90,6 +90,23 @@ class PasskeyCredentialListResponse(BaseModel):
     credentials: list[PasskeyCredentialOut]
 
 
+class SessionOut(BaseModel):
+    """One active session, as reported by ``GET /auth/sessions``.
+
+    ``jti_suffix`` is the last few characters of the session's Redis-tracked refresh
+    jti - enough to disambiguate in the UI and identify it for revocation, never the
+    full jti. ``created_at``/``last_seen_at`` are unset for a session that predates
+    the metadata upgrade (see ``app.core.security``); the frontend should treat that
+    the same as an unrecognised device, not an error.
+    """
+
+    jti_suffix: str
+    device: str
+    created_at: datetime | None
+    last_seen_at: datetime | None
+    current: bool
+
+
 class PasskeyLoginBeginRequest(BaseModel):
     email: EmailStr | None = None
 

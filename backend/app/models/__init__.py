@@ -24,6 +24,8 @@ from app.models.enums import (
     CredentialTransport,
     DigitalMaturity,
     GoalStatus,
+    HandoffStatus,
+    HandoffUrgency,
     HoldingStatus,
     LeadStage,
     LifeEventStatus,
@@ -39,6 +41,7 @@ from app.models.enums import (
     TxnDirection,
 )
 from app.models.goal import SavingsGoal
+from app.models.handoff import HandoffRequest
 from app.models.identity import Credential, OtpCode, User
 from app.models.memory import EMBEDDING_DIM, AgentMemory
 from app.models.notes import StaffNote
@@ -66,6 +69,8 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     "Lead",
     # goals
     "SavingsGoal",
+    # handoff
+    "HandoffRequest",
     # conversation
     "Conversation",
     "Message",
@@ -97,6 +102,8 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     "CredentialTransport",
     "DigitalMaturity",
     "GoalStatus",
+    "HandoffStatus",
+    "HandoffUrgency",
     "HoldingStatus",
     "LeadStage",
     "LifeEventStatus",

@@ -40,7 +40,7 @@ from app.schemas.chat import (
     ChatSessionUpdateRequest,
     MessageOut,
 )
-from app.workers.activity import publish_run_result
+from app.workers.activity import publish_handoff, publish_run_result
 
 logger = get_logger(__name__)
 
@@ -163,9 +163,15 @@ async def _drain_silently(agen: AsyncIterator[dict[str, Any]]) -> None:
 
 
 async def _publish_chat_activity(customer_id: str | None, done_event: dict[str, Any]) -> None:
-    if customer_id is None:
-        return
     structured = done_event.get("structured") or {}
+    handoffs = list(structured.get("handoffs") or [])
+    if customer_id is None:
+        # Anonymous prospect turns stay off the feed to avoid spam - but a handoff
+        # is rare and high-signal (a prospect asking for a human), so publish those.
+        redis = get_redis()
+        for handoff in handoffs:
+            await publish_handoff(redis, customer_id=None, handoff=handoff)
+        return
     await publish_run_result(
         get_redis(),
         customer_id=customer_id,
@@ -174,6 +180,7 @@ async def _publish_chat_activity(customer_id: str | None, done_event: dict[str, 
         proposals=list(done_event.get("proposals") or []),
         life_events=list(structured.get("life_events") or []),
         nudges=list(structured.get("nudges") or []),
+        handoffs=handoffs,
     )
 
 

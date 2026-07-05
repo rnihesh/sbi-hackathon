@@ -50,16 +50,25 @@ from webauthn.helpers.structs import (
 from app.core.config import get_settings, is_staff_email
 from app.core.db import get_db
 from app.core.logging import get_logger
-from app.core.ratelimit import rate_limit
+from app.core.ratelimit import client_ip, rate_limit
 from app.core.redis import get_redis
 from app.core.security import (
     SessionError,
+    TokenError,
+    TokenType,
     clear_session_cookies,
     create_session,
+    decode_token,
     get_current_user,
+    list_sessions,
+    revoke_session,
     revoke_session_from_refresh_token,
     rotate_session,
     set_session_cookies,
+    summarize_user_agent,
+)
+from app.core.security import (
+    jti_suffix as session_jti_suffix,
 )
 from app.models.customer import Customer
 from app.models.enums import CredentialTransport
@@ -76,6 +85,7 @@ from app.schemas.auth import (
     PasskeyLoginCompleteRequest,
     PasskeyRegisterCompleteRequest,
     PasskeyRegisterCompleteResponse,
+    SessionOut,
     UserOut,
 )
 from app.services.email import EmailNotConfigured, send_templated
@@ -287,6 +297,7 @@ async def google_login() -> Response:
 
 @router.get("/google/callback", summary="Google OAuth callback")
 async def google_callback(
+    request: Request,
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
@@ -337,7 +348,9 @@ async def google_callback(
         email=str(claims.get("email", user.email)).lower(),
     )
 
-    access_token, refresh_token = await create_session(str(user.id))
+    access_token, refresh_token = await create_session(
+        str(user.id), user_agent=request.headers.get("user-agent"), ip=client_ip(request)
+    )
 
     response = RedirectResponse(
         f"{settings.frontend_url}/app/home", status_code=status.HTTP_302_FOUND
@@ -371,40 +384,6 @@ def _infer_transport(transports: list[AuthenticatorTransport] | None) -> Credent
     if transports:
         return CredentialTransport.CROSS_PLATFORM
     return CredentialTransport.PLATFORM
-
-
-def _label_from_user_agent(user_agent: str | None) -> str:
-    """Small heuristic UA parse for a human-friendly credential label (e.g. "Chrome on Mac")."""
-    if not user_agent:
-        return "Passkey"
-
-    if "iPhone" in user_agent:
-        device = "iPhone"
-    elif "iPad" in user_agent:
-        device = "iPad"
-    elif "Android" in user_agent:
-        device = "Android"
-    elif "Macintosh" in user_agent or "Mac OS" in user_agent:
-        device = "Mac"
-    elif "Windows" in user_agent:
-        device = "Windows"
-    elif "Linux" in user_agent:
-        device = "Linux"
-    else:
-        device = "device"
-
-    if "Edg/" in user_agent:
-        browser = "Edge"
-    elif "CriOS" in user_agent or ("Chrome/" in user_agent and "Chromium" not in user_agent):
-        browser = "Chrome"
-    elif "Firefox/" in user_agent:
-        browser = "Firefox"
-    elif "Safari/" in user_agent and "Chrome/" not in user_agent:
-        browser = "Safari"
-    else:
-        browser = "Passkey"
-
-    return f"{browser} on {device}"
 
 
 @router.post("/passkey/register/begin", summary="Begin passkey registration (auth required)")
@@ -483,7 +462,9 @@ async def passkey_register_complete(
         raise HTTPException(status_code=400, detail=f"Passkey registration failed: {exc}") from exc
 
     transport = _infer_transport(parsed.response.transports)
-    label = payload.label or _label_from_user_agent(request.headers.get("user-agent"))
+    label = payload.label or summarize_user_agent(
+        request.headers.get("user-agent"), fallback="Passkey"
+    )
 
     credential = Credential(
         user_id=user.id,
@@ -600,6 +581,7 @@ async def passkey_login_begin(
 )
 async def passkey_login_complete(
     payload: PasskeyLoginCompleteRequest,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> MeResponse:
@@ -643,7 +625,9 @@ async def passkey_login_complete(
     customer_result = await db.execute(select(Customer).where(Customer.user_id == user.id))
     customer = customer_result.scalar_one_or_none()
 
-    access_token, refresh_token = await create_session(str(user.id))
+    access_token, refresh_token = await create_session(
+        str(user.id), user_agent=request.headers.get("user-agent"), ip=client_ip(request)
+    )
     set_session_cookies(response, access_token=access_token, refresh_token=refresh_token)
 
     return _me_response(user, customer)
@@ -721,7 +705,10 @@ async def otp_send(
 
 @router.post("/otp/verify", response_model=MeResponse, summary="Verify an email OTP code")
 async def otp_verify(
-    payload: OtpVerifyRequest, response: Response, db: AsyncSession = Depends(get_db)
+    payload: OtpVerifyRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ) -> MeResponse:
     """Body: ``{"email": str, "code": "123456"}``. Sets session cookies on success.
 
@@ -749,7 +736,9 @@ async def otp_verify(
     user, created = await _get_or_create_user_by_email(db, email)
     customer = await _ensure_customer_for_user(db, user, full_name=None, email=email)
 
-    access_token, refresh_token = await create_session(str(user.id))
+    access_token, refresh_token = await create_session(
+        str(user.id), user_agent=request.headers.get("user-agent"), ip=client_ip(request)
+    )
     set_session_cookies(response, access_token=access_token, refresh_token=refresh_token)
 
     if created:
@@ -765,6 +754,7 @@ async def otp_verify(
 
 @router.post("/refresh", response_model=MessageResponse, summary="Rotate the session")
 async def refresh_session(
+    request: Request,
     response: Response,
     sarathi_refresh: Annotated[str | None, Cookie()] = None,
 ) -> MessageResponse:
@@ -774,7 +764,11 @@ async def refresh_session(
         raise HTTPException(status_code=401, detail="No active session")
 
     try:
-        access_token, refresh_token = await rotate_session(sarathi_refresh)
+        access_token, refresh_token = await rotate_session(
+            sarathi_refresh,
+            user_agent=request.headers.get("user-agent"),
+            ip=client_ip(request),
+        )
     except SessionError as exc:
         clear_session_cookies(response)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -793,6 +787,91 @@ async def logout(
         await revoke_session_from_refresh_token(sarathi_refresh)
     clear_session_cookies(response)
     return MessageResponse(message="logged out")
+
+
+# ========================================================================================
+# Active sessions (security surface)
+# ========================================================================================
+#
+# A "session" here is one refresh-token chain, tracked in Redis (see
+# `app.core.security`). Only the current request's `sarathi_refresh` cookie carries a
+# jti - the access cookie does not - so "which session is this browser" is resolved
+# from that cookie, best-effort (an absent/broken refresh cookie just means no session
+# is marked `current`, never an error: the access cookie alone already authenticated
+# the request via `get_current_user`).
+
+
+def _current_session_jti(refresh_token: str | None) -> str | None:
+    if not refresh_token:
+        return None
+    try:
+        payload = decode_token(refresh_token, expected_type=TokenType.REFRESH)
+    except TokenError:
+        return None
+    jti = payload.get("jti")
+    return str(jti) if jti else None
+
+
+@router.get("/sessions", response_model=list[SessionOut], summary="List active sessions")
+async def list_sessions_route(
+    user: Annotated[User, Depends(get_current_user)],
+    sarathi_refresh: Annotated[str | None, Cookie()] = None,
+) -> list[SessionOut]:
+    """Every active (unexpired, unrevoked) session for the caller, newest-active first.
+
+    A session predating the metadata upgrade (see `app.core.security`) reports
+    ``device="Unknown device"`` and ``created_at``/``last_seen_at`` unset rather than
+    erroring.
+    """
+    current_jti = _current_session_jti(sarathi_refresh)
+    sessions = await list_sessions(str(user.id))
+    sessions.sort(key=lambda s: s.last_seen_at or s.created_at or "", reverse=True)
+    return [
+        SessionOut(
+            jti_suffix=session_jti_suffix(s.jti),
+            device=s.device or "Unknown device",
+            created_at=s.created_at,
+            last_seen_at=s.last_seen_at,
+            current=s.jti == current_jti,
+        )
+        for s in sessions
+    ]
+
+
+@router.delete(
+    "/sessions/{jti_suffix}", response_model=MessageResponse, summary="Revoke a session"
+)
+async def revoke_session_route(
+    jti_suffix: str,
+    response: Response,
+    user: Annotated[User, Depends(get_current_user)],
+    sarathi_refresh: Annotated[str | None, Cookie()] = None,
+) -> MessageResponse:
+    """Revoke the session whose jti ends in ``jti_suffix``.
+
+    ``404`` if no active session matches; ``409`` if more than one does (the suffix is
+    only the last few jti characters - see `app.core.security.jti_suffix` - so a
+    collision, while very unlikely, is possible and must not silently revoke the wrong
+    session). Revoking the *current* session (the one this request's own refresh cookie
+    names) is logout: the session cookies are cleared too.
+    """
+    sessions = await list_sessions(str(user.id))
+    matches = [s for s in sessions if session_jti_suffix(s.jti) == jti_suffix]
+    if not matches:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409, detail="Multiple sessions match that id - cannot revoke uniquely"
+        )
+
+    target = matches[0]
+    current_jti = _current_session_jti(sarathi_refresh)
+    await revoke_session(str(user.id), target.jti)
+
+    if target.jti == current_jti:
+        clear_session_cookies(response)
+        return MessageResponse(message="logged out")
+    return MessageResponse(message="session revoked")
 
 
 # ========================================================================================

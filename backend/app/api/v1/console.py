@@ -12,11 +12,13 @@ nobody is staff.
 
 from __future__ import annotations
 
+import csv
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from io import StringIO
 from typing import Annotated, Any
 
 import orjson
@@ -49,12 +51,15 @@ from app.models.customer import Customer
 from app.models.engagement import LifeEvent, Notification, Nudge, Proposal
 from app.models.enums import (
     AgentTriggerType,
+    HandoffStatus,
     HoldingStatus,
     LeadStage,
+    NotificationKind,
     NudgeStatus,
     ProposalKind,
     ProposalStatus,
 )
+from app.models.handoff import HandoffRequest
 from app.models.identity import User
 from app.models.notes import StaffNote
 from app.models.sim_injection import SimInjection
@@ -84,6 +89,10 @@ from app.schemas.console import (
     DlqEntrySummaryOut,
     ErrorLogEntryOut,
     FunnelResponse,
+    HandoffCustomerOut,
+    HandoffOut,
+    HandoffQueueResponse,
+    HandoffResolveRequest,
     HoldingCategoryFunnel,
     LeadCustomerOut,
     LeadOut,
@@ -112,6 +121,7 @@ from app.schemas.console import (
     WorkerHealthOut,
 )
 from app.services.email import EmailNotConfigured
+from app.services.notifications import notify
 from app.sim import events as sim_events
 from app.sim import generator as sim_generator
 from app.sim import personas as sim_personas
@@ -719,28 +729,78 @@ async def console_feed(request: Request, staff: StaffUser) -> EventSourceRespons
 # ===========================================================================
 
 
-@router.get("/leads", response_model=list[LeadOut])
-async def list_leads(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> list[LeadOut]:
+async def _fetch_leads(db: AsyncSession) -> Sequence[Lead]:
+    """The exact leads query backing both ``/leads`` and its CSV export."""
     result = await db.execute(
         select(Lead).options(selectinload(Lead.customer)).order_by(Lead.created_at.desc())
     )
-    leads = result.scalars().all()
-    return [
-        LeadOut(
-            id=lead.id,
-            customer=LeadCustomerOut(id=lead.customer.id, full_name=lead.customer.full_name)
-            if lead.customer
-            else None,
-            source=lead.source,
-            name=lead.name,
-            email=lead.email,
-            phone=lead.phone,
-            intent_score=lead.intent_score,
-            stage=lead.stage.value,
-            created_at=lead.created_at,
+    return result.scalars().all()
+
+
+def _lead_out(lead: Lead) -> LeadOut:
+    return LeadOut(
+        id=lead.id,
+        customer=LeadCustomerOut(id=lead.customer.id, full_name=lead.customer.full_name)
+        if lead.customer
+        else None,
+        source=lead.source,
+        name=lead.name,
+        email=lead.email,
+        phone=lead.phone,
+        intent_score=lead.intent_score,
+        stage=lead.stage.value,
+        created_at=lead.created_at,
+    )
+
+
+@router.get("/leads", response_model=list[LeadOut])
+async def list_leads(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> list[LeadOut]:
+    leads = await _fetch_leads(db)
+    return [_lead_out(lead) for lead in leads]
+
+
+@router.get("/export/leads.csv", summary="Export leads as CSV (staff only)")
+async def export_leads_csv(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> Response:
+    """Same rows and ordering as ``GET /console/leads`` (see ``_fetch_leads``), as a
+    ``text/csv`` download. Values go through the stdlib ``csv`` module (proper
+    quoting of commas/quotes/newlines), never hand-rolled string joining."""
+    leads = await _fetch_leads(db)
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "id",
+            "customer_id",
+            "customer_name",
+            "source",
+            "name",
+            "email",
+            "phone",
+            "intent_score",
+            "stage",
+            "created_at",
+        ]
+    )
+    for lead in leads:
+        writer.writerow(
+            [
+                str(lead.id),
+                str(lead.customer.id) if lead.customer else "",
+                lead.customer.full_name if lead.customer else "",
+                lead.source,
+                lead.name or "",
+                lead.email or "",
+                lead.phone or "",
+                lead.intent_score,
+                lead.stage.value,
+                lead.created_at.isoformat(),
+            ]
         )
-        for lead in leads
-    ]
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=leads.csv"},
+    )
 
 
 # ===========================================================================
@@ -1230,12 +1290,12 @@ def _build_detection_row(
     return row, chosen
 
 
-@router.get("/analytics/detection", response_model=DetectionResponse)
-async def analytics_detection(
-    staff: StaffUser, db: AsyncSession = Depends(get_db)
-) -> DetectionResponse:
+async def _compute_detection(db: AsyncSession) -> DetectionResponse:
     """Detection scorecard: each console-injected ground-truth event vs. the life
-    event the agent mesh actually detected (type match, confidence, and lag)."""
+    event the agent mesh actually detected (type match, confidence, and lag).
+
+    Shared by the JSON endpoint (``GET /analytics/detection``) and its CSV export
+    (``GET /export/detection.csv``) - one query + grading pass, two renderings."""
     inj_rows = (
         await db.execute(
             select(SimInjection, Customer.full_name)
@@ -1298,6 +1358,58 @@ async def analytics_detection(
         detections_with_no_injection=detections_with_no_injection,
     )
     return DetectionResponse(summary=summary, rows=rows)
+
+
+@router.get("/analytics/detection", response_model=DetectionResponse)
+async def analytics_detection(
+    staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> DetectionResponse:
+    return await _compute_detection(db)
+
+
+@router.get("/export/detection.csv", summary="Export the detection scorecard as CSV (staff only)")
+async def export_detection_csv(staff: StaffUser, db: AsyncSession = Depends(get_db)) -> Response:
+    """Same grading pass as ``GET /console/analytics/detection`` (see
+    ``_compute_detection``), as a ``text/csv`` download."""
+    detection = await _compute_detection(db)
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "injection_id",
+            "customer_id",
+            "customer_name",
+            "injected_type",
+            "injected_at",
+            "expected_types",
+            "detected",
+            "detected_type",
+            "confidence",
+            "lag_seconds",
+            "matched",
+        ]
+    )
+    for row in detection.rows:
+        writer.writerow(
+            [
+                str(row.injection_id),
+                str(row.customer_id),
+                row.customer_name,
+                row.injected_type,
+                row.injected_at.isoformat(),
+                ";".join(row.expected_types),
+                row.detected,
+                row.detected_type or "",
+                row.confidence if row.confidence is not None else "",
+                row.lag_seconds if row.lag_seconds is not None else "",
+                row.matched,
+            ]
+        )
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=detection.csv"},
+    )
 
 
 def _bucket_by_utc_day(rows: Sequence[Any]) -> dict[date, Any]:
@@ -1659,6 +1771,172 @@ async def request_churn_reengagement(
         ref_id=proposal.id,
     )
     return ChurnReengageResult(proposal_id=proposal.id, status=proposal.status.value)
+
+
+# ===========================================================================
+# Human handoffs (the queue where the agent steps aside for a person)
+# ===========================================================================
+
+# Open-first, then high-urgency-first, then longest-waiting-first.
+_HANDOFF_STATUS_RANK = {HandoffStatus.OPEN: 0, HandoffStatus.CLAIMED: 1}
+_HANDOFF_URGENCY_RANK = {"high": 0, "normal": 1, "low": 2}
+_HANDOFF_RESOLVED_LIMIT = 20
+
+
+def _serialize_handoff(handoff: HandoffRequest) -> HandoffOut:
+    customer = (
+        HandoffCustomerOut(id=handoff.customer.id, full_name=handoff.customer.full_name)
+        if handoff.customer is not None
+        else None
+    )
+    return HandoffOut(
+        id=handoff.id,
+        customer=customer,
+        conversation_id=handoff.conversation_id,
+        reason=handoff.reason,
+        urgency=handoff.urgency.value,
+        status=handoff.status.value,
+        claimed_by=handoff.claimed_by,
+        resolution_note=handoff.resolution_note,
+        created_at=handoff.created_at,
+        claimed_at=handoff.claimed_at,
+        resolved_at=handoff.resolved_at,
+    )
+
+
+@router.get("/handoffs", response_model=HandoffQueueResponse)
+async def list_handoffs(
+    staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> HandoffQueueResponse:
+    """The console handoff queue: active (open + claimed) first, then last 20 resolved."""
+    active_rows = (
+        (
+            await db.execute(
+                select(HandoffRequest).where(HandoffRequest.status != HandoffStatus.RESOLVED)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    active_sorted = sorted(
+        active_rows,
+        key=lambda h: (
+            _HANDOFF_STATUS_RANK.get(h.status, 9),
+            _HANDOFF_URGENCY_RANK.get(h.urgency.value, 9),
+            h.created_at,
+        ),
+    )
+
+    resolved_rows = (
+        (
+            await db.execute(
+                select(HandoffRequest)
+                .where(HandoffRequest.status == HandoffStatus.RESOLVED)
+                .order_by(HandoffRequest.resolved_at.desc().nullslast())
+                .limit(_HANDOFF_RESOLVED_LIMIT)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return HandoffQueueResponse(
+        active=[_serialize_handoff(h) for h in active_sorted],
+        resolved=[_serialize_handoff(h) for h in resolved_rows],
+    )
+
+
+@router.post("/handoffs/{handoff_id}/claim", response_model=HandoffOut)
+async def claim_handoff(
+    handoff_id: uuid.UUID, staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> HandoffOut:
+    handoff = await db.get(HandoffRequest, handoff_id)
+    if handoff is None:
+        raise HTTPException(status_code=404, detail="Handoff not found")
+    if handoff.status == HandoffStatus.RESOLVED:
+        raise HTTPException(status_code=409, detail="This handoff is already resolved")
+    if handoff.status == HandoffStatus.CLAIMED:
+        raise HTTPException(
+            status_code=409, detail=f"This handoff is already claimed by {handoff.claimed_by}"
+        )
+
+    handoff.status = HandoffStatus.CLAIMED
+    handoff.claimed_by = staff.email
+    handoff.claimed_at = datetime.now(UTC)
+    await db.flush()
+    await AuditTrail().record(
+        db, staff.email, "handoff.claimed", "handoff_request", str(handoff.id),
+        {"urgency": handoff.urgency.value},
+    )
+    await db.commit()
+
+    await publish_activity(
+        get_redis(),
+        type="handoff",
+        customer_id=handoff.customer_id,
+        summary=f"Handoff claimed by {staff.email}",
+        ref_id=handoff.id,
+    )
+    return _serialize_handoff(handoff)
+
+
+@router.post("/handoffs/{handoff_id}/resolve", response_model=HandoffOut)
+async def resolve_handoff(
+    handoff_id: uuid.UUID,
+    payload: HandoffResolveRequest,
+    staff: StaffUser,
+    db: AsyncSession = Depends(get_db),
+) -> HandoffOut:
+    """Resolve a handoff. Only the claimer resolves a claimed one; an unclaimed
+    handoff is auto-claimed by whoever resolves it (small team, keep it simple)."""
+    handoff = await db.get(HandoffRequest, handoff_id)
+    if handoff is None:
+        raise HTTPException(status_code=404, detail="Handoff not found")
+    if handoff.status == HandoffStatus.RESOLVED:
+        raise HTTPException(status_code=409, detail="This handoff is already resolved")
+    if (
+        handoff.status == HandoffStatus.CLAIMED
+        and handoff.claimed_by is not None
+        and handoff.claimed_by != staff.email
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"This handoff is claimed by {handoff.claimed_by} - only they can resolve it",
+        )
+
+    now = datetime.now(UTC)
+    if handoff.claimed_by is None:
+        # Resolver auto-claims an unclaimed handoff.
+        handoff.claimed_by = staff.email
+        handoff.claimed_at = now
+    handoff.status = HandoffStatus.RESOLVED
+    handoff.resolution_note = payload.note
+    handoff.resolved_at = now
+
+    if handoff.customer_id is not None:
+        note_preview = payload.note if len(payload.note) <= 140 else f"{payload.note[:139]}…"
+        await notify(
+            db,
+            handoff.customer_id,
+            NotificationKind.SYSTEM,
+            "Your request was handled",
+            f"A relationship manager followed up: {note_preview}",
+        )
+
+    await db.flush()
+    await AuditTrail().record(
+        db, staff.email, "handoff.resolved", "handoff_request", str(handoff.id),
+        {"urgency": handoff.urgency.value},
+    )
+    await db.commit()
+
+    await publish_activity(
+        get_redis(),
+        type="handoff",
+        customer_id=handoff.customer_id,
+        summary=f"Handoff resolved by {staff.email}",
+        ref_id=handoff.id,
+    )
+    return _serialize_handoff(handoff)
 
 
 # ===========================================================================

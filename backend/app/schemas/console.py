@@ -468,3 +468,49 @@ class StaffNoteCreateRequest(BaseModel):
         if not stripped:
             raise ValueError("text must not be blank")
         return stripped
+
+
+# ===========================================================================
+# Human handoffs (`GET /console/handoffs`, `POST /console/handoffs/{id}/claim`,
+# `POST /console/handoffs/{id}/resolve`)
+# ===========================================================================
+
+
+class HandoffCustomerOut(BaseModel):
+    """The linked customer for a handoff, or absent for an anonymous prospect."""
+
+    id: uuid.UUID
+    full_name: str
+
+
+class HandoffOut(BaseModel):
+    id: uuid.UUID
+    customer: HandoffCustomerOut | None
+    conversation_id: str
+    reason: str
+    urgency: Literal["low", "normal", "high"]
+    status: Literal["open", "claimed", "resolved"]
+    claimed_by: str | None
+    resolution_note: str | None
+    created_at: datetime
+    claimed_at: datetime | None
+    resolved_at: datetime | None
+
+
+class HandoffQueueResponse(BaseModel):
+    """The console queue: active (open + claimed) first, then recent resolved."""
+
+    active: list[HandoffOut]
+    resolved: list[HandoffOut]
+
+
+class HandoffResolveRequest(BaseModel):
+    note: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("note")
+    @classmethod
+    def _strip_and_require_nonblank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("note must not be blank")
+        return stripped

@@ -15,6 +15,7 @@ from langchain_core.runnables import RunnableConfig
 from app.agents.actions import create_nudge, create_proposal, normalize_action_kind
 from app.agents.context import AgentContext
 from app.agents.goal_tools import build_goal_tools
+from app.agents.handoff_tools import build_handoff_tools
 from app.agents.language import language_directive
 from app.agents.state import AgentState, append_proposal, append_structured, set_structured
 from app.agents.supervisor import run_specialist
@@ -253,6 +254,7 @@ def build_tools() -> dict[str, Tool]:
             _get_spending_insights,
         ),
         *build_goal_tools(AGENT_NAME),
+        *build_handoff_tools(AGENT_NAME),
     ]
     return {t.name: t for t in tools}
 

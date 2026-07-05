@@ -152,6 +152,22 @@ class GoalStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+class HandoffUrgency(StrEnum):
+    """How quickly a human relationship manager should pick up a handoff."""
+
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+
+
+class HandoffStatus(StrEnum):
+    """Lifecycle of a human-handoff request in the console queue."""
+
+    OPEN = "open"
+    CLAIMED = "claimed"
+    RESOLVED = "resolved"
+
+
 class MemoryKind(StrEnum):
     EPISODIC = "episodic"
     FACT = "fact"

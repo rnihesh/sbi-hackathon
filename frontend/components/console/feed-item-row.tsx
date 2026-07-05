@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { Activity, Bell, ClipboardCheck, Sparkles, type LucideIcon } from "lucide-react"
+import { Activity, Bell, ClipboardCheck, Headset, Sparkles, type LucideIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { formatRelativeTime } from "@/lib/format"
@@ -12,6 +12,7 @@ const TYPE_ICON: Record<FeedItemType, LucideIcon> = {
   proposal: ClipboardCheck,
   life_event: Sparkles,
   nudge: Bell,
+  handoff: Headset,
 }
 
 const TYPE_LABEL: Record<FeedItemType, string> = {
@@ -19,6 +20,7 @@ const TYPE_LABEL: Record<FeedItemType, string> = {
   proposal: "Proposal",
   life_event: "Life event",
   nudge: "Nudge",
+  handoff: "Human handoff",
 }
 
 /** Where each feed-item type's action button goes - `agent_run` deep-links to
@@ -34,13 +36,14 @@ function actionFor(item: FeedItem): { href: string; label: string } | null {
   }
   if (item.type === "proposal") return { href: "/console/approvals", label: "Review" }
   if (item.type === "life_event") return { href: "/console/life-events", label: "View" }
+  if (item.type === "handoff") return { href: "/console/handoffs", label: "Queue" }
   return null
 }
 
 export function FeedItemRow({ item }: { item: FeedItem }) {
   const Icon = TYPE_ICON[item.type] ?? Activity
-  // Proposals need a human decision - give them the one spot of accent color.
-  const isActionable = item.type === "proposal"
+  // Proposals and handoffs need a human - give them the one spot of accent color.
+  const isActionable = item.type === "proposal" || item.type === "handoff"
   const action = actionFor(item)
 
   return (

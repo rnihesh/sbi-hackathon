@@ -1,6 +1,7 @@
 import {
   Activity,
   ClipboardCheck,
+  Headset,
   Users,
   Filter,
   BarChart3,
@@ -20,6 +21,7 @@ export interface ConsoleNavItem {
 export const CONSOLE_NAV_ITEMS: ConsoleNavItem[] = [
   { href: "/console/feed", label: "Live Feed", icon: Activity },
   { href: "/console/approvals", label: "Approvals", icon: ClipboardCheck },
+  { href: "/console/handoffs", label: "Handoffs", icon: Headset },
   { href: "/console/leads", label: "Leads", icon: Users },
   { href: "/console/funnels", label: "Funnels", icon: Filter },
   { href: "/console/analytics", label: "Analytics", icon: BarChart3 },
