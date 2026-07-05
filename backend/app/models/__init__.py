@@ -23,6 +23,7 @@ from app.models.enums import (
     ConversationChannel,
     CredentialTransport,
     DigitalMaturity,
+    GoalStatus,
     HoldingStatus,
     LeadStage,
     LifeEventStatus,
@@ -37,6 +38,7 @@ from app.models.enums import (
     TxnChannel,
     TxnDirection,
 )
+from app.models.goal import SavingsGoal
 from app.models.identity import Credential, OtpCode, User
 from app.models.memory import EMBEDDING_DIM, AgentMemory
 from app.models.notes import StaffNote
@@ -62,6 +64,8 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     "Holding",
     # crm
     "Lead",
+    # goals
+    "SavingsGoal",
     # conversation
     "Conversation",
     "Message",
@@ -92,6 +96,7 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     "ConversationChannel",
     "CredentialTransport",
     "DigitalMaturity",
+    "GoalStatus",
     "HoldingStatus",
     "LeadStage",
     "LifeEventStatus",

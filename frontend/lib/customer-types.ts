@@ -67,3 +67,25 @@ export function ctaUrl(nudge: Nudge): string | null {
   const url = nudge.cta?.url ?? nudge.cta?.href
   return typeof url === "string" && url.trim() ? url : null
 }
+
+/** A customer savings goal with its computed progress. `progress_paise` is how
+ * much the total balance has grown since the goal was set (see the API's honest
+ * progress model), and `pct` is that clamped to 0..100. */
+export interface Goal {
+  id: string
+  name: string
+  target_paise: number
+  baseline_paise: number
+  target_date: string | null
+  status: "active" | "achieved" | "archived"
+  achieved_at: string | null
+  created_at: string
+  progress_paise: number
+  pct: number
+}
+
+export interface GoalListResponse {
+  goals: Goal[]
+  active_count: number
+  max_active: number
+}

@@ -144,6 +144,14 @@ class NotificationKind(StrEnum):
     SYSTEM = "system"
 
 
+class GoalStatus(StrEnum):
+    """Lifecycle of a customer savings goal."""
+
+    ACTIVE = "active"
+    ACHIEVED = "achieved"
+    ARCHIVED = "archived"
+
+
 class MemoryKind(StrEnum):
     EPISODIC = "episodic"
     FACT = "fact"

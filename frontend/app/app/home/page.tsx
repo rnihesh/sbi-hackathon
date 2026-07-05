@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { ArrowDownLeft, ArrowUpRight, Bell, ChevronRight, Sparkles } from "lucide-react"
+import { ArrowDownLeft, ArrowUpRight, Bell, ChevronRight, Sparkles, TrendingUp } from "lucide-react"
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { SarathiMark } from "@/components/brand/logo"
+import { GoalsSection } from "@/components/customer/goals-section"
 import { HomeSkeleton } from "@/components/customer/home-skeleton"
 
 export default function HomePage() {
@@ -131,8 +132,21 @@ export default function HomePage() {
             </motion.div>
           )}
 
+          <motion.div variants={staggerItem}>
+            <GoalsSection />
+          </motion.div>
+
           <motion.div variants={staggerItem} className="flex flex-col gap-3">
-            <h2 className="text-sm font-medium text-muted-foreground">Recent activity</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-medium text-muted-foreground">Recent activity</h2>
+              <Link
+                href="/app/insights"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+              >
+                <TrendingUp className="size-3.5" />
+                Insights
+              </Link>
+            </div>
             {dashboard.recent_transactions.length === 0 ? (
               <EmptyPanel label="No transactions yet - they'll show up here as they happen." />
             ) : (

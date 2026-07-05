@@ -53,6 +53,7 @@ from app.models.banking import Account
 from app.models.customer import Customer
 from app.models.enums import AgentTriggerType
 from app.models.tracing import AgentRun
+from app.services.goals import evaluate_all_active_goals
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -286,6 +287,18 @@ async def run_scheduler_tick() -> SweepTickResult:
             logger.info("scheduler_memory_pruned", pruned=pruned)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("scheduler_memory_prune_failed", error=str(exc))
+
+    # Savings-goal achievement: flip any goal that has reached target and notify
+    # the customer. DB-only (no LLM, no spend), guarded exactly like the prune
+    # above so a goal-eval failure can never destabilise the sweep.
+    try:
+        async with sm() as session:
+            achieved = await evaluate_all_active_goals(session)
+            await session.commit()
+        if achieved:
+            logger.info("scheduler_goals_achieved", achieved=achieved)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("scheduler_goal_eval_failed", error=str(exc))
 
     logger.info(
         "scheduler_tick_complete", swept=len(swept), batch=batch, candidates=len(candidates)

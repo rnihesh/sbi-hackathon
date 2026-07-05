@@ -14,12 +14,13 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents.actions import create_nudge, create_proposal, normalize_action_kind
 from app.agents.context import AgentContext
+from app.agents.goal_tools import build_goal_tools
 from app.agents.language import language_directive
 from app.agents.state import AgentState, append_proposal, append_structured, set_structured
 from app.agents.supervisor import run_specialist
 from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
 from app.models.enums import NotificationKind, ProposalKind, TxnChannel
-from app.services import ledger, products
+from app.services import insights, ledger, products
 from app.services.notifications import notify
 
 AGENT_NAME = "adoption"
@@ -85,6 +86,10 @@ netbanking) - the app renders the steps.
 - Use draft_nudge for a gentle in-app suggestion.
 - Use propose_action for impactful outreach (e.g. an email offer) - it goes to a human \
 approval queue, it does NOT send automatically.
+- Coach toward savings goals: check get_savings_goals, and when a customer wants to save \
+for something use create_savings_goal (progress tracks balance growth since the goal was set).
+- Use get_spending_insights for 'where did my money go' or category-spend questions - it \
+returns a real monthly breakdown, not a guess.
 Keep replies concrete and encouraging. Customer holds: {held}. Recent context: {mem}.
 
 {language_directive(profile.get("preferred_language"))}"""
@@ -189,6 +194,22 @@ async def _start_walkthrough(ctx: AgentContext, state: AgentState, args: ToolArg
     return payload
 
 
+async def _get_spending_insights(
+    ctx: AgentContext, state: AgentState, args: ToolArgs
+) -> ToolResult:
+    """Real "where did my money go" data: monthly breakdown + trend signals.
+
+    Same deterministic aggregation (no LLM) the customer's own Insights page
+    reads from - this is the tool the LLM narrates over, not a paraphrase.
+    """
+    if ctx.customer_id is None:
+        return {"error": "no customer in context"}
+    months = int(args.get("months", 3) or 3)
+    breakdown = await insights.monthly_breakdown(ctx.session, ctx.customer_id, months=months)
+    trend_data = await insights.trends(ctx.session, ctx.customer_id)
+    return {"months": breakdown["months"], "note": breakdown["note"], "trends": trend_data}
+
+
 def build_tools() -> dict[str, Tool]:
     tools = [
         make_tool(
@@ -222,6 +243,16 @@ def build_tools() -> dict[str, Tool]:
             }, required=["topic"]),
             _start_walkthrough,
         ),
+        make_tool(
+            "get_spending_insights",
+            "Compute a real monthly spending breakdown by category, with trend detection "
+            "(top mover, largest recent expense, recurring merchants).",
+            obj_schema({
+                "months": {"type": "integer", "description": "lookback window in months (1-12)"},
+            }),
+            _get_spending_insights,
+        ),
+        *build_goal_tools(AGENT_NAME),
     ]
     return {t.name: t for t in tools}
 

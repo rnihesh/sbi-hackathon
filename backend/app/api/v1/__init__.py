@@ -10,6 +10,8 @@ from app.api.v1 import (
     console,
     customers,
     demo,
+    goals,
+    insights,
     memory,
     notifications,
     nudges,
@@ -22,6 +24,8 @@ api_router.include_router(auth.me_router)
 api_router.include_router(chat.router)
 api_router.include_router(customers.router)
 api_router.include_router(demo.router)
+api_router.include_router(goals.router)
+api_router.include_router(insights.router)
 api_router.include_router(nudges.router)
 api_router.include_router(notifications.router)
 api_router.include_router(products.router)

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from app.models.conversation import Conversation
     from app.models.crm import Lead
     from app.models.engagement import LifeEvent, Notification, Nudge, Proposal
+    from app.models.goal import SavingsGoal
     from app.models.identity import User
     from app.models.memory import AgentMemory
     from app.models.notes import StaffNote
@@ -91,5 +92,8 @@ class Customer(UUIDPKMixin, TimestampMixin, Base):
     )
     leads: Mapped[list[Lead]] = relationship(back_populates="customer")
     staff_notes: Mapped[list[StaffNote]] = relationship(
+        back_populates="customer", cascade="all, delete-orphan"
+    )
+    savings_goals: Mapped[list[SavingsGoal]] = relationship(
         back_populates="customer", cascade="all, delete-orphan"
     )

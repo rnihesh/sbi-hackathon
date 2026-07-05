@@ -17,6 +17,7 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents import memory
 from app.agents.context import AgentContext
+from app.agents.goal_tools import build_goal_tools
 from app.agents.language import language_directive
 from app.agents.state import AgentState, set_structured
 from app.agents.supervisor import run_specialist
@@ -371,6 +372,7 @@ def build_tools() -> dict[str, Tool]:
             }, required=["text"]),
             _record_memory,
         ),
+        *build_goal_tools(AGENT_NAME),
     ]
     return {t.name: t for t in tools}
 
