@@ -1,6 +1,6 @@
 /** Wire types for the `/console/*` staff endpoints. */
 
-export type FeedItemType = "agent_run" | "proposal" | "life_event" | "nudge"
+export type FeedItemType = "agent_run" | "proposal" | "life_event" | "nudge" | "handoff"
 
 export interface FeedItem {
   type: FeedItemType
@@ -507,6 +507,40 @@ export interface ChurnCockpitResponse {
 export interface ChurnReengageResult {
   proposal_id: string
   status: string
+}
+
+// ---------------------------------------------------------------------------
+// Human handoffs - mirrors `app.schemas.console.{HandoffOut,HandoffQueueResponse}`
+// (`GET /console/handoffs`, `POST /console/handoffs/{id}/{claim,resolve}`). This
+// is the "agent knows when to step aside" queue: open first, high urgency
+// accented, claim -> resolve-with-note -> collapsed resolved section.
+// ---------------------------------------------------------------------------
+
+export type HandoffUrgency = "low" | "normal" | "high"
+export type HandoffStatus = "open" | "claimed" | "resolved"
+
+export interface HandoffCustomer {
+  id: string
+  full_name: string
+}
+
+export interface Handoff {
+  id: string
+  customer: HandoffCustomer | null
+  conversation_id: string
+  reason: string
+  urgency: HandoffUrgency
+  status: HandoffStatus
+  claimed_by: string | null
+  resolution_note: string | null
+  created_at: string
+  claimed_at: string | null
+  resolved_at: string | null
+}
+
+export interface HandoffQueue {
+  active: Handoff[]
+  resolved: Handoff[]
 }
 
 // ---------------------------------------------------------------------------

@@ -31,9 +31,21 @@ export interface WalkthroughStep {
   description?: string
 }
 
+/** Rendered when Sarathi calls `request_human_handoff` - a distinct system-style
+ * card in the transcript announcing it stepped aside for a person. Built directly
+ * from the `request_human_handoff` tool_end result (see `chat/page.tsx`), not the
+ * `structured` SSE event, so it isn't produced by `normalizeStructuredPayload`. */
+export interface HandoffNotice {
+  kind: "handoff"
+  urgency: string
+  status: string
+  reason?: string
+}
+
 export type StructuredPayload =
   | { kind: "product_offers"; offers: ProductOffer[] }
   | { kind: "walkthrough"; title?: string; steps: WalkthroughStep[] }
+  | HandoffNotice
   | { kind: "unknown"; raw: unknown }
 
 export interface ChatMessage {

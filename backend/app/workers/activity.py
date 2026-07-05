@@ -23,7 +23,7 @@ from app.core.redis import AGENT_ACTIONS
 
 logger = get_logger(__name__)
 
-ActivityType = Literal["agent_run", "proposal", "life_event", "nudge"]
+ActivityType = Literal["agent_run", "proposal", "life_event", "nudge", "handoff"]
 
 
 async def publish_activity(
@@ -48,6 +48,31 @@ async def publish_activity(
         logger.warning("activity_publish_failed", type=type, error=str(exc))
 
 
+async def publish_handoff(
+    redis: Redis,
+    *,
+    customer_id: str | uuid.UUID | None,
+    handoff: dict[str, Any],
+) -> None:
+    """Publish one ``handoff`` console-feed envelope. Never raises.
+
+    Shared by :func:`publish_run_result` (authenticated turns) and the chat
+    entrypoint's anonymous-prospect path, so a prospect asking for a human still
+    reaches the queue's live feed even though anonymous turns otherwise stay off it."""
+    urgency = handoff.get("urgency", "normal")
+    reason = str(handoff.get("reason", "")).strip()
+    summary = f"Human handoff requested ({urgency})"
+    if reason:
+        summary = f"{summary}: {reason}"
+    await publish_activity(
+        redis,
+        type="handoff",
+        customer_id=customer_id,
+        summary=summary[:200],
+        ref_id=handoff.get("id"),
+    )
+
+
 async def publish_run_result(
     redis: Redis,
     *,
@@ -57,10 +82,11 @@ async def publish_run_result(
     proposals: list[str],
     life_events: list[dict[str, Any]],
     nudges: list[str],
+    handoffs: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Publish one ``agent_run`` envelope, plus one per proposal/life-event/nudge
-    the run created - shared by the chat and event-trigger paths so both surface
-    identical console-feed shapes for the same underlying agent output."""
+    """Publish one ``agent_run`` envelope, plus one per proposal/life-event/nudge/
+    handoff the run created - shared by the chat and event-trigger paths so both
+    surface identical console-feed shapes for the same underlying agent output."""
     await publish_activity(
         redis, type="agent_run", customer_id=customer_id, summary=run_summary, ref_id=run_id
     )
@@ -84,3 +110,5 @@ async def publish_run_result(
         await publish_activity(
             redis, type="nudge", customer_id=customer_id, summary="Nudge sent", ref_id=nudge_id
         )
+    for handoff in handoffs or []:
+        await publish_handoff(redis, customer_id=customer_id, handoff=handoff)

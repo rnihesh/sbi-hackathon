@@ -279,6 +279,7 @@ async def process_envelope(envelope: dict[str, Any]) -> None:
             proposals=result.proposals,
             life_events=result.life_events,
             nudges=result.nudges,
+            handoffs=list(result.structured.get("handoffs") or []),
         )
 
 

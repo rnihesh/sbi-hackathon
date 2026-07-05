@@ -15,6 +15,7 @@ import {
   KeyRound,
   Languages,
   LogOut,
+  Monitor,
   Moon,
   Pencil,
   ShieldCheck,
@@ -32,6 +33,7 @@ import { cn } from "@/lib/utils"
 import { formatRelativeTime, humanizeIdentifier } from "@/lib/format"
 import { LANGUAGE_OPTIONS, languageLabel } from "@/lib/languages"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import {
@@ -62,6 +64,14 @@ interface PasskeyCredential {
   label: string
   transport: "platform" | "cross_platform"
   created_at: string
+}
+
+interface SessionItem {
+  jti_suffix: string
+  device: string
+  created_at: string | null
+  last_seen_at: string | null
+  current: boolean
 }
 
 /** WebAuthn's own signal for "this authenticator is already registered" -
@@ -138,6 +148,9 @@ export default function ProfilePage() {
   const [pendingRemoval, setPendingRemoval] = React.useState<PasskeyCredential | null>(null)
   const { captureFocus, onCloseAutoFocus } = useFocusReturn()
   const [removingPasskey, setRemovingPasskey] = React.useState(false)
+  const [sessions, setSessions] = React.useState<SessionItem[] | null>(null)
+  const [pendingRevokeSession, setPendingRevokeSession] = React.useState<SessionItem | null>(null)
+  const [revokingSession, setRevokingSession] = React.useState(false)
   const [languagePending, setLanguagePending] = React.useState(false)
   const [editingField, setEditingField] = React.useState<EditableField | null>(null)
   const [editValue, setEditValue] = React.useState("")
@@ -161,6 +174,19 @@ export default function ProfilePage() {
   React.useEffect(() => {
     void loadPasskeys()
   }, [loadPasskeys])
+
+  const loadSessions = React.useCallback(async () => {
+    try {
+      const res = await api.get<SessionItem[]>(`${API_V1}/auth/sessions`)
+      setSessions(res)
+    } catch {
+      setSessions([])
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void loadSessions()
+  }, [loadSessions])
 
   React.useEffect(() => {
     if (editingField) {
@@ -369,6 +395,29 @@ export default function ProfilePage() {
     }
   }
 
+  async function handleRevokeSession() {
+    if (!pendingRevokeSession) return
+    const target = pendingRevokeSession
+    setRevokingSession(true)
+    try {
+      await api.delete(`${API_V1}/auth/sessions/${target.jti_suffix}`)
+      setPendingRevokeSession(null)
+      if (target.current) {
+        // The backend already cleared the session cookies (revoking your own
+        // current session is logout) - `handleLogout` just syncs local state,
+        // toasts, and redirects; its own `/auth/logout` call is a harmless no-op.
+        await handleLogout()
+        return
+      }
+      setSessions((prev) => prev?.filter((s) => s.jti_suffix !== target.jti_suffix) ?? prev)
+      toast.success("Session revoked")
+    } catch (err) {
+      toast.error(describeApiError(err, "Couldn't revoke that session"))
+    } finally {
+      setRevokingSession(false)
+    }
+  }
+
   async function handleLanguageChange(value: string | null) {
     if (!me?.customer || languagePending || value === me.customer.preferred_language) return
     const previousMe = me
@@ -441,7 +490,7 @@ export default function ProfilePage() {
               >
                 <span className="flex items-center gap-2.5">
                   <Brain className="size-4 text-muted-foreground" />
-                  What Sarathi knows about me
+                  Privacy &amp; activity
                 </span>
                 <ChevronRight className="size-4 text-muted-foreground" />
               </Link>
@@ -531,6 +580,65 @@ export default function ProfilePage() {
                   </AnimatePresence>
                 </div>
               )}
+
+              <div className="flex flex-col gap-3 border-t border-border pt-4">
+                <div>
+                  <p className="text-sm font-medium">Active sessions</p>
+                  <p className="text-sm text-muted-foreground">
+                    Devices currently signed in to your account.
+                  </p>
+                </div>
+
+                {sessions === null ? null : sessions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No active sessions found.</p>
+                ) : (
+                  <AnimatePresence initial={false}>
+                    {sessions.map((session) => (
+                      <motion.div
+                        key={session.jti_suffix}
+                        layout
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0, transition: { duration: 0.16 } }}
+                        transition={springSoft}
+                        className="flex items-center gap-3 overflow-hidden py-1.5"
+                      >
+                        <Monitor className="size-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p className="truncate text-sm font-medium">{session.device}</p>
+                            {session.current && (
+                              <Badge variant="secondary" className="shrink-0">
+                                This device
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {session.created_at
+                              ? `Started ${formatRelativeTime(session.created_at)}`
+                              : "Signed in before we tracked device history"}
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={
+                            session.current
+                              ? "Sign out this device"
+                              : `Revoke session on ${session.device}`
+                          }
+                          onClick={() => {
+                            captureFocus()
+                            setPendingRevokeSession(session)
+                          }}
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                )}
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -635,6 +743,42 @@ export default function ProfilePage() {
               onClick={() => void handleRemovePasskey()}
             >
               {removingPasskey ? "Removing…" : "Remove"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingRevokeSession !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRevokeSession(null)
+        }}
+      >
+        <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
+          <DialogHeader>
+            <DialogTitle>
+              {pendingRevokeSession?.current ? "Sign out this device?" : "Revoke this session?"}
+            </DialogTitle>
+            <DialogDescription>
+              {pendingRevokeSession?.current
+                ? "You'll be signed out of your current session on this device."
+                : `"${pendingRevokeSession?.device}" will no longer be signed in.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingRevokeSession(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={revokingSession}
+              onClick={() => void handleRevokeSession()}
+            >
+              {revokingSession
+                ? "Revoking…"
+                : pendingRevokeSession?.current
+                  ? "Sign out"
+                  : "Revoke"}
             </Button>
           </DialogFooter>
         </DialogContent>

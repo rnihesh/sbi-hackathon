@@ -221,6 +221,25 @@ export default function ChatPage() {
                 )
                 updateMessage(assistantId, { toolActivity })
               }
+              // Human handoff: render a distinct system-style card in the transcript
+              // (not just the tool chip), so the moment Sarathi steps aside is legible.
+              if (tool === "request_human_handoff") {
+                const result =
+                  data?.result && typeof data.result === "object"
+                    ? (data.result as Record<string, unknown>)
+                    : {}
+                ensurePlaceholder()
+                structured = [
+                  ...(structured ?? []),
+                  {
+                    kind: "handoff",
+                    urgency: typeof result.urgency === "string" ? result.urgency : "normal",
+                    status: typeof result.status === "string" ? result.status : "open",
+                    reason: typeof result.reason === "string" ? result.reason : undefined,
+                  },
+                ]
+                updateMessage(assistantId, { structured })
+              }
               break
             }
             case "token": {

@@ -39,6 +39,12 @@ interface MemoryPayload {
   profile_facts: Record<string, unknown>
 }
 
+interface ActivityItem {
+  ts: string
+  action: string
+  summary: string
+}
+
 /** Friendly label + chip style for each memory kind the backend stores. */
 const KIND_META: Record<string, { label: string; variant: BadgeVariant }> = {
   episodic: { label: "Conversation", variant: "secondary" },
@@ -112,6 +118,8 @@ export default function MemoryPage() {
   const [forgettingOne, setForgettingOne] = React.useState(false)
   const [confirmForgetAll, setConfirmForgetAll] = React.useState(false)
   const [forgettingAll, setForgettingAll] = React.useState(false)
+  const [activity, setActivity] = React.useState<ActivityItem[] | null>(null)
+  const [activityError, setActivityError] = React.useState<string | null>(null)
   const { captureFocus, onCloseAutoFocus } = useFocusReturn()
 
   const load = React.useCallback(async (showSkeleton: boolean) => {
@@ -136,6 +144,27 @@ export default function MemoryPage() {
   React.useEffect(() => {
     void load(true)
   }, [load])
+
+  const loadActivity = React.useCallback(async () => {
+    try {
+      const res = await api.get<{ activity: ActivityItem[] }>(`${API_V1}/me/activity?limit=30`)
+      setActivity(res.activity)
+      setActivityError(null)
+    } catch (err) {
+      // A 404 here means "no customer profile yet" - the same condition `load()`
+      // already surfaces as the page's `noProfile` empty state, so just treat it
+      // as an empty activity list rather than a second error message.
+      if (err instanceof ApiError && err.status === 404) {
+        setActivity([])
+      } else {
+        setActivityError(describeApiError(err, "Couldn't load your account activity."))
+      }
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void loadActivity()
+  }, [loadActivity])
 
   async function handleForgetOne() {
     if (!pendingForget) return
@@ -196,11 +225,12 @@ export default function MemoryPage() {
           <div>
             <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
               <Brain className="size-5 text-primary" />
-              What Sarathi knows about you
+              Privacy &amp; activity
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Sarathi remembers context from your conversations to serve you better. It is your
-              information: you can forget any of it, any time.
+              What Sarathi remembers about you, and a plain record of what has happened on your
+              account. It is your information: you can review it here, and forget any memory, any
+              time.
             </p>
           </div>
         </div>
@@ -249,6 +279,45 @@ export default function MemoryPage() {
                     No profile details on file yet.
                   </CardContent>
                 </Card>
+              )}
+            </section>
+
+            <section className="flex flex-col gap-3">
+              <h2 className="text-sm font-medium text-muted-foreground">Account activity</h2>
+
+              {activityError ? (
+                <Card>
+                  <CardContent className="text-sm text-muted-foreground">
+                    {activityError}
+                  </CardContent>
+                </Card>
+              ) : activity === null ? (
+                <div className="flex flex-col gap-2">
+                  <Skeleton className="h-14 w-full rounded-xl" />
+                  <Skeleton className="h-14 w-full rounded-xl" />
+                </div>
+              ) : activity.length === 0 ? (
+                <EmptyState
+                  title="Nothing recorded yet"
+                  body="Once something happens on your account - your identity gets verified, an account opens, a proposal reaches you - it will show up here."
+                />
+              ) : (
+                <div className="rounded-xl border border-border">
+                  {activity.map((item, i) => (
+                    <div key={`${item.ts}-${i}`}>
+                      <div className="flex items-center justify-between gap-4 px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{item.action}</p>
+                          <p className="text-xs text-muted-foreground">{item.summary}</p>
+                        </div>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {formatRelativeTime(item.ts)}
+                        </span>
+                      </div>
+                      {i < activity.length - 1 && <Separator />}
+                    </div>
+                  ))}
+                </div>
               )}
             </section>
 

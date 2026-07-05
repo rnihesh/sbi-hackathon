@@ -146,9 +146,18 @@ const TOOL_VERB_PREFIXES: Array<{ prefixes: string[]; verb: string }> = [
   { prefixes: ["save", "store", "write", "remember"], verb: "Saving" },
 ]
 
+/** Tools whose humanized label isn't well captured by the verb-prefix heuristic
+ * (or that deserve a warmer, purpose-specific phrasing). */
+const TOOL_LABELS: Record<string, string> = {
+  request_human_handoff: "Connecting you with a relationship manager…",
+}
+
 /** Turns a tool name like `check_kyc_status` into "Verifying KYC status…" for the
  * chat activity chips. Falls back to "Running {name}…" for anything unrecognized. */
 export function humanizeToolActivity(tool: string): string {
+  const labelled = TOOL_LABELS[tool]
+  if (labelled) return labelled
+
   const parts = tool
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()

@@ -6,6 +6,24 @@ Sarathi authenticates via Google OAuth / passkeys / email OTP (Wave 2); this mod
 mints and verifies the resulting httpOnly JWT session cookies and tracks refresh-token
 lifetime in Redis so sessions can be rotated and revoked server-side.
 
+Session metadata (device/security surface)
+--------------------------------------------
+Each tracked session key (``session:{user_id}:{jti}``) used to store the bare marker
+string ``"1"`` - just enough to answer "is this jti still active". It now stores a
+small JSON object (:func:`create_session`) with a human-friendly device summary, a
+privacy-truncated IP prefix, and creation/last-seen timestamps, so a signed-in user can
+see and revoke their own active sessions (``GET``/``DELETE /auth/sessions``).
+
+This is a compatible upgrade, not a migration: the key's TTL and revoke-by-delete
+semantics are unchanged, only the *value* gained structure. A session created before
+this change (or one whose value fails to parse as the expected JSON object) is treated
+as a legacy/unknown session - :func:`list_sessions` reports it with ``device=None``
+(the API layer renders that as "Unknown device") and no timestamps, rather than
+erroring. Once such a session next rotates its refresh token, :func:`rotate_session`
+upgrades it to the new metadata shape (its ``created_at`` resets to that rotation
+moment, since the true original login time was never recorded under the old format -
+the one honest gap in an otherwise-compatible upgrade).
+
 CSRF posture
 ------------
 State-changing auth routes (``/auth/*``, ``/me`` mutations) are cookie-authenticated
@@ -34,8 +52,11 @@ and WebAuthn challenges (single-use, Redis-backed, short TTL).
 
 from __future__ import annotations
 
+import ipaddress
+import json
 import secrets
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Any
@@ -56,6 +77,69 @@ REFRESH_COOKIE = "sarathi_refresh"
 
 # Redis key prefix for tracked (rotatable/revocable) refresh-token jtis.
 _SESSION_KEY_PREFIX = "session"
+
+# Number of trailing jti characters exposed to the client as a session identifier.
+# The full jti is never returned - see the module docstring on session metadata.
+_JTI_SUFFIX_LEN = 6
+
+
+def jti_suffix(jti: str) -> str:
+    """The last few characters of a session jti - a display id only, never the jti."""
+    return jti[-_JTI_SUFFIX_LEN:]
+
+
+def summarize_user_agent(user_agent: str | None, *, fallback: str) -> str:
+    """Small heuristic UA parse for a human-friendly summary (e.g. "Chrome on Mac").
+
+    ``fallback`` is returned verbatim for a missing/empty ``user_agent`` - callers pick
+    a fallback that fits their context (e.g. "Passkey" when labelling a credential,
+    "Unknown device" when summarising a session).
+    """
+    if not user_agent:
+        return fallback
+
+    if "iPhone" in user_agent:
+        device = "iPhone"
+    elif "iPad" in user_agent:
+        device = "iPad"
+    elif "Android" in user_agent:
+        device = "Android"
+    elif "Macintosh" in user_agent or "Mac OS" in user_agent:
+        device = "Mac"
+    elif "Windows" in user_agent:
+        device = "Windows"
+    elif "Linux" in user_agent:
+        device = "Linux"
+    else:
+        device = "device"
+
+    if "Edg/" in user_agent:
+        browser = "Edge"
+    elif "CriOS" in user_agent or ("Chrome/" in user_agent and "Chromium" not in user_agent):
+        browser = "Chrome"
+    elif "Firefox/" in user_agent:
+        browser = "Firefox"
+    elif "Safari/" in user_agent and "Chrome/" not in user_agent:
+        browser = "Safari"
+    else:
+        return fallback
+
+    return f"{browser} on {device}"
+
+
+def _truncate_ip_prefix(ip: str | None) -> str | None:
+    """Truncate ``ip`` to a coarse, non-identifying network prefix (``/24`` for IPv4,
+    ``/48`` for IPv6), or ``None`` if ``ip`` is missing/unparseable (e.g. "unknown",
+    the ``client_ip`` fallback for a socket with no peer)."""
+    if not ip:
+        return None
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    prefixlen = 24 if addr.version == 4 else 48
+    network = ipaddress.ip_network(f"{addr}/{prefixlen}", strict=False)
+    return f"{network.network_address}/{prefixlen}"
 
 
 class TokenType(StrEnum):
@@ -118,7 +202,7 @@ def decode_token(token: str, *, expected_type: TokenType | None = None) -> dict[
 
 
 # --------------------------------------------------------------------------------------
-# Redis-backed refresh session tracking (issue / rotate / revoke)
+# Redis-backed refresh session tracking (issue / rotate / revoke / list)
 # --------------------------------------------------------------------------------------
 
 
@@ -126,28 +210,97 @@ def _session_key(user_id: str, jti: str) -> str:
     return f"{_SESSION_KEY_PREFIX}:{user_id}:{jti}"
 
 
-async def create_session(user_id: str) -> tuple[str, str]:
+@dataclass(slots=True, frozen=True)
+class SessionInfo:
+    """One active session as reported by :func:`list_sessions`.
+
+    ``device``/``created_at``/``last_seen_at`` are ``None`` for a legacy session (one
+    created before the metadata upgrade, or whose value otherwise failed to parse) -
+    see the module docstring. ``ip_prefix`` is collected for potential future display
+    but the current ``/auth/sessions`` API intentionally does not expose it (device +
+    relative time is plenty to recognise "is this me"; a network prefix is noise).
+    """
+
+    jti: str
+    device: str | None
+    ip_prefix: str | None
+    created_at: str | None
+    last_seen_at: str | None
+
+
+def _decode_session_metadata(raw: str | bytes | None) -> dict[str, Any] | None:
+    """Parse a session Redis value into its metadata dict.
+
+    Returns ``None`` for a missing value, the legacy bare marker (``"1"``), or anything
+    else that fails to decode as a JSON object - all treated identically as "no
+    metadata on file for this session" by callers. ``bytes`` is accepted defensively
+    (the process-wide client is configured with ``decode_responses=True`` so this
+    always sees ``str`` in practice, but the client's type stubs are generic).
+    """
+    if not raw:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def create_session(
+    user_id: str,
+    *,
+    user_agent: str | None = None,
+    ip: str | None = None,
+    created_at: str | None = None,
+) -> tuple[str, str]:
     """Issue a fresh access+refresh token pair for ``user_id``.
 
     The refresh token's ``jti`` is recorded in Redis with a TTL matching the refresh
-    token's own lifetime; only jtis present in Redis are accepted on rotation/use.
+    token's own lifetime; only jtis present in Redis are accepted on rotation/use. The
+    Redis value carries device/IP/timing metadata for the sessions security surface -
+    ``user_agent``/``ip`` are the *new* request's (so "last seen" reflects the device
+    presenting this token pair); ``created_at`` lets :func:`rotate_session` carry a
+    session's original creation time forward across rotations (omit it - the default,
+    "now" - for a genuinely new login).
     """
     settings = get_settings()
     jti = secrets.token_urlsafe(24)
     access_token = create_access_token(user_id)
     refresh_token = create_refresh_token(user_id, jti=jti)
 
+    now_iso = datetime.now(tz=UTC).isoformat()
+    metadata = {
+        "device": summarize_user_agent(user_agent, fallback="Unknown device"),
+        "ip_prefix": _truncate_ip_prefix(ip),
+        "created_at": created_at or now_iso,
+        "last_seen_at": now_iso,
+    }
+
     redis = get_redis()
-    await redis.set(_session_key(user_id, jti), "1", ex=settings.jwt_refresh_ttl_seconds)
+    await redis.set(
+        _session_key(user_id, jti), json.dumps(metadata), ex=settings.jwt_refresh_ttl_seconds
+    )
     return access_token, refresh_token
 
 
-async def rotate_session(refresh_token: str) -> tuple[str, str]:
+async def rotate_session(
+    refresh_token: str,
+    *,
+    user_agent: str | None = None,
+    ip: str | None = None,
+) -> tuple[str, str]:
     """Verify + consume ``refresh_token``, issuing a new access+refresh pair.
 
     The presented refresh token's ``jti`` is revoked (deleted) as part of rotation so a
     replayed/stolen refresh token can be used at most once. Raises :class:`SessionError`
     if the token is malformed, expired, or its ``jti`` is not an active session.
+
+    The new session's metadata carries forward the old session's ``created_at`` (so
+    "created" keeps reflecting the original login, not this rotation) while ``device``/
+    ``ip_prefix``/``last_seen_at`` are refreshed from the caller-supplied ``user_agent``/
+    ``ip`` of *this* rotation request.
     """
     try:
         payload = decode_token(refresh_token, expected_type=TokenType.REFRESH)
@@ -161,11 +314,19 @@ async def rotate_session(refresh_token: str) -> tuple[str, str]:
 
     redis = get_redis()
     key = _session_key(user_id, jti)
+    # Read the old metadata (best-effort - only used to carry `created_at` forward)
+    # before deleting; the delete result is still the authoritative revoke check.
+    previous_raw = await redis.get(key)
     deleted = await redis.delete(key)
     if not deleted:
         raise SessionError("refresh session is not active (expired or revoked)")
 
-    return await create_session(user_id)
+    previous = _decode_session_metadata(previous_raw)
+    carried_created_at = previous.get("created_at") if previous else None
+
+    return await create_session(
+        user_id, user_agent=user_agent, ip=ip, created_at=carried_created_at
+    )
 
 
 async def revoke_session(user_id: str, jti: str) -> None:
@@ -187,6 +348,34 @@ async def revoke_session_from_refresh_token(refresh_token: str) -> None:
     jti = payload.get("jti")
     if user_id and jti:
         await revoke_session(str(user_id), str(jti))
+
+
+async def list_sessions(user_id: str) -> list[SessionInfo]:
+    """All of ``user_id``'s currently-active (unexpired, unrevoked) sessions.
+
+    Order is unspecified here - callers (the ``/auth/sessions`` route) sort for
+    display. Uses ``SCAN`` (not ``KEYS``) so this never blocks Redis even if a user
+    somehow accumulates many sessions.
+    """
+    redis = get_redis()
+    pattern = _session_key(user_id, "*")
+    sessions: list[SessionInfo] = []
+    async for key in redis.scan_iter(match=pattern):
+        jti = key.split(":", 2)[2]
+        raw = await redis.get(key)
+        if raw is None:
+            continue  # expired between the SCAN and this GET
+        metadata = _decode_session_metadata(raw)
+        sessions.append(
+            SessionInfo(
+                jti=jti,
+                device=metadata.get("device") if metadata else None,
+                ip_prefix=metadata.get("ip_prefix") if metadata else None,
+                created_at=metadata.get("created_at") if metadata else None,
+                last_seen_at=metadata.get("last_seen_at") if metadata else None,
+            )
+        )
+    return sessions
 
 
 # --------------------------------------------------------------------------------------
