@@ -152,6 +152,30 @@ class GoalStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+class StandingPurpose(StrEnum):
+    """What a recurring auto-transfer feeds toward."""
+
+    GOAL = "goal"
+    FD = "fd"
+    SAVINGS = "savings"
+
+
+class StandingCadence(StrEnum):
+    """How often a standing instruction runs."""
+
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+
+class StandingStatus(StrEnum):
+    """Lifecycle of a standing instruction (recurring auto-transfer)."""
+
+    ACTIVE = "active"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
 class HandoffUrgency(StrEnum):
     """How quickly a human relationship manager should pick up a handoff."""
 

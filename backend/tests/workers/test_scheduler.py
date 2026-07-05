@@ -10,7 +10,7 @@ so no live LLM call ever fires (HARD BUDGET rule).
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -30,8 +30,12 @@ from app.models.enums import (
     AgentRunStatus,
     AgentTriggerType,
     MemoryKind,
+    StandingCadence,
+    StandingPurpose,
+    StandingStatus,
 )
 from app.models.memory import AgentMemory
+from app.models.standing import StandingInstruction
 from app.models.tracing import AgentRun
 
 # ---------------------------------------------------------------------------
@@ -362,3 +366,72 @@ async def test_tick_prunes_stale_episodic_memories(
         .where(AgentMemory.customer_id == customer.id)
     )
     assert remaining == memory.EPISODIC_KEEP_RECENT  # the oldest one was pruned
+
+
+# ---------------------------------------------------------------------------
+# 10. Standing instructions run even when the LLM sweep is paused for budget
+# ---------------------------------------------------------------------------
+
+
+async def _add_due_instruction(
+    db: AsyncSession, customer_id: uuid.UUID, account_id: uuid.UUID, *, amount_paise: int
+) -> StandingInstruction:
+    si = StandingInstruction(
+        customer_id=customer_id,
+        from_account_id=account_id,
+        purpose=StandingPurpose.SAVINGS,
+        amount_paise=amount_paise,
+        cadence=StandingCadence.MONTHLY,
+        next_run_date=date(2020, 1, 1),  # long overdue -> due
+        status=StandingStatus.ACTIVE,
+    )
+    db.add(si)
+    await db.commit()
+    return si
+
+
+async def test_standing_runs_even_when_budget_exceeded(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Over budget: the LLM sweep is paused, but standing execution is pure ledger
+    # work (no spend) and must still fire on the same tick.
+    _install_router(monkeypatch, over_budget=True)
+    swept = _stub_runs(monkeypatch)
+    customer = await _add_customer_with_account(db, name="Has Standing")
+    account = await db.scalar(sa.select(Account).where(Account.customer_id == customer.id))
+    assert account is not None
+    await _add_due_instruction(db, customer.id, account.id, amount_paise=2_000_00)
+
+    result = await scheduler.run_scheduler_tick()
+    assert result.reason == "budget"  # LLM sweep paused
+    assert swept == []  # no LLM run happened
+
+    # But the due auto-transfer still posted a real debit (committed in the tick's
+    # own session, so read the balance with a fresh query, not the cached object).
+    balance = await db.scalar(sa.select(Account.balance_paise).where(Account.id == account.id))
+    assert balance == 10_000_00 - 2_000_00
+
+
+async def test_standing_kill_switch_freezes_execution(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_router(monkeypatch)
+    _stub_runs(monkeypatch)
+    monkeypatch.setattr(get_settings(), "standing_instructions_enabled", False)
+    customer = await _add_customer_with_account(db, name="Frozen Standing")
+    account = await db.scalar(sa.select(Account).where(Account.customer_id == customer.id))
+    assert account is not None
+    await _add_due_instruction(db, customer.id, account.id, amount_paise=2_000_00)
+
+    result = await scheduler.run_scheduler_tick()
+    assert result.reason == "ok"
+
+    # Kill switch on: no debit posted, balance untouched, instruction still due.
+    balance = await db.scalar(sa.select(Account.balance_paise).where(Account.id == account.id))
+    assert balance == 10_000_00
+    row = (
+        await db.execute(
+            sa.select(StandingInstruction.next_run_date, StandingInstruction.runs_count)
+        )
+    ).one()
+    assert row.next_run_date == date(2020, 1, 1) and row.runs_count == 0

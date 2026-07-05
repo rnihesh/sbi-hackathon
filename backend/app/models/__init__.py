@@ -37,6 +37,9 @@ from app.models.enums import (
     NudgeStatus,
     ProposalKind,
     ProposalStatus,
+    StandingCadence,
+    StandingPurpose,
+    StandingStatus,
     TxnChannel,
     TxnDirection,
 )
@@ -46,6 +49,7 @@ from app.models.identity import Credential, OtpCode, User
 from app.models.memory import EMBEDDING_DIM, AgentMemory
 from app.models.notes import StaffNote
 from app.models.sim_injection import SimInjection
+from app.models.standing import StandingInstruction
 from app.models.tracing import AgentRun, AgentStep, LlmCall
 
 __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
@@ -69,6 +73,8 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     "Lead",
     # goals
     "SavingsGoal",
+    # standing instructions
+    "StandingInstruction",
     # handoff
     "HandoffRequest",
     # conversation
@@ -115,6 +121,9 @@ __all__ = [  # noqa: RUF022 - grouped by domain for readability, not sorted
     "NudgeStatus",
     "ProposalKind",
     "ProposalStatus",
+    "StandingCadence",
+    "StandingPurpose",
+    "StandingStatus",
     "TxnChannel",
     "TxnDirection",
 ]

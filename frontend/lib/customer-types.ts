@@ -89,3 +89,27 @@ export interface GoalListResponse {
   active_count: number
   max_active: number
 }
+
+/** A recurring auto-transfer (standing instruction). Every run posts a real
+ * ledger debit; a goal-linked transfer also adjusts the goal baseline so moving
+ * cash into the goal envelope does not read as a loss of goal progress. */
+export interface StandingInstruction {
+  id: string
+  from_account_id: string
+  purpose: "goal" | "fd" | "savings"
+  goal_id: string | null
+  goal_name: string | null
+  amount_paise: number
+  cadence: "weekly" | "monthly"
+  next_run_date: string
+  status: "active" | "paused" | "completed" | "cancelled"
+  last_run_at: string | null
+  runs_count: number
+  created_at: string
+}
+
+export interface StandingInstructionListResponse {
+  instructions: StandingInstruction[]
+  active_count: number
+  max_active: number
+}

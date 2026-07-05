@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { SarathiMark } from "@/components/brand/logo"
 import { GoalsSection } from "@/components/customer/goals-section"
+import { StandingInstructionsSection } from "@/components/customer/standing-instructions-section"
 import { HomeSkeleton } from "@/components/customer/home-skeleton"
 
 export default function HomePage() {
@@ -132,8 +133,9 @@ export default function HomePage() {
             </motion.div>
           )}
 
-          <motion.div variants={staggerItem}>
+          <motion.div variants={staggerItem} className="flex flex-col gap-6">
             <GoalsSection />
+            <StandingInstructionsSection accounts={dashboard.accounts} />
           </motion.div>
 
           <motion.div variants={staggerItem} className="flex flex-col gap-3">

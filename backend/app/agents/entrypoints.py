@@ -50,7 +50,7 @@ from app.models.enums import (
     NotificationKind,
     ProposalStatus,
 )
-from app.services import products
+from app.services import products, standing
 from app.services.notifications import notify
 
 logger = get_logger(__name__)
@@ -573,14 +573,17 @@ async def execute_proposal(proposal_id: str, approver: str) -> ProposalExecution
 
         # An approved+executed proposal is a real offer landing for the customer -
         # tell them (mirrors the already-generated proposal copy, no LLM call).
-        await notify(
-            session,
-            proposal.customer_id,
-            NotificationKind.OFFER,
-            proposal.title,
-            proposal.body,
-            link="/app/nudges",
-        )
+        # The standing-instruction dispatch writes its own (home-linked) system
+        # notification, so skip the generic offer one for it.
+        if kind != "create_standing_instruction":
+            await notify(
+                session,
+                proposal.customer_id,
+                NotificationKind.OFFER,
+                proposal.title,
+                proposal.body,
+                link="/app/nudges",
+            )
 
         proposal.status = ProposalStatus.EXECUTED
         proposal.decided_by = approver
@@ -622,6 +625,9 @@ async def _dispatch_action(
         )
         return {"nudge_id": str(nudge.id), "product_code": code}
 
+    if kind == "create_standing_instruction":
+        return await _dispatch_create_standing(session, proposal, action)
+
     if kind in ("send_email", "email"):
         sender = _load_email_sender()
         if sender is None:
@@ -632,6 +638,48 @@ async def _dispatch_action(
         return await _dispatch_email(sender, proposal, action)
 
     raise NotImplementedError(f"no executor for proposal action kind '{kind}'")
+
+
+async def _dispatch_create_standing(
+    session: Any, proposal: Proposal, action: dict[str, Any]
+) -> dict[str, Any]:
+    """Create the real standing instruction a customer/agent proposal approved.
+
+    Re-runs the full :func:`app.services.standing.create_standing_instruction`
+    validation (account/goal ownership, amount guard, active cap) against the
+    proposal's customer, so an approval can never bypass the guards the REST API
+    enforces. Also writes a customer notification that the auto-transfer is live.
+    """
+    from datetime import date as _date
+
+    raw_goal = action.get("goal_id")
+    goal_id = _uuid_or_none(str(raw_goal)) if raw_goal else None
+    raw_start = action.get("start_date")
+    start_date = _date.fromisoformat(str(raw_start)) if raw_start else None
+
+    instruction = await standing.create_standing_instruction(
+        session,
+        customer_id=proposal.customer_id,
+        from_account_id=uuid.UUID(str(action["from_account_id"])),
+        purpose=str(action.get("purpose", "savings")),
+        goal_id=goal_id,
+        amount_paise=int(action.get("amount_paise", 0)),
+        cadence=str(action.get("cadence", "monthly")),
+        start_date=start_date,
+    )
+    await notify(
+        session,
+        proposal.customer_id,
+        NotificationKind.SYSTEM,
+        "Auto-transfer set up",
+        proposal.body,
+        link="/app/home",
+    )
+    return {
+        "standing_instruction_id": str(instruction.id),
+        "amount_paise": instruction.amount_paise,
+        "cadence": instruction.cadence.value,
+    }
 
 
 async def _dispatch_email(

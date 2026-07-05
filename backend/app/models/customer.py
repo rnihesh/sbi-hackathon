@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from app.models.identity import User
     from app.models.memory import AgentMemory
     from app.models.notes import StaffNote
+    from app.models.standing import StandingInstruction
     from app.models.tracing import AgentRun
 
 
@@ -95,5 +96,8 @@ class Customer(UUIDPKMixin, TimestampMixin, Base):
         back_populates="customer", cascade="all, delete-orphan"
     )
     savings_goals: Mapped[list[SavingsGoal]] = relationship(
+        back_populates="customer", cascade="all, delete-orphan"
+    )
+    standing_instructions: Mapped[list[StandingInstruction]] = relationship(
         back_populates="customer", cascade="all, delete-orphan"
     )

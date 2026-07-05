@@ -141,6 +141,13 @@ class Settings(BaseSettings):
     day once reached, regardless of how many customers are eligible - a spend and
     load safety rail on the unattended path."""
 
+    standing_instructions_enabled: bool = True
+    """Kill switch for the standing-instruction (recurring auto-transfer) pass the
+    scheduler runs each tick. Independent of the LLM sweep: standing execution is
+    pure ledger work with no spend, so it is NOT budget-gated and runs on every
+    enabled tick even when the sweep is paused for budget. Set False to freeze all
+    automated auto-transfers while leaving the rest of the scheduler running."""
+
     @property
     def staff_email_list(self) -> list[str]:
         raw = self.staff_emails.strip()

@@ -42,7 +42,15 @@ async def create_nudge(
 
 # Inner action["kind"] values that execute_proposal can dispatch. Anything else
 # would strand the proposal as unapprovable, so tool layers normalize first.
-EXECUTABLE_ACTION_KINDS = {"send_nudge", "nudge", "product_offer", "offer", "send_email", "email"}
+EXECUTABLE_ACTION_KINDS = {
+    "send_nudge",
+    "nudge",
+    "product_offer",
+    "offer",
+    "send_email",
+    "email",
+    "create_standing_instruction",
+}
 
 _FALLBACK_ACTION_KINDS = {
     "email": "send_email",

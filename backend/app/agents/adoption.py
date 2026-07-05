@@ -17,6 +17,7 @@ from app.agents.context import AgentContext
 from app.agents.goal_tools import build_goal_tools
 from app.agents.handoff_tools import build_handoff_tools
 from app.agents.language import language_directive
+from app.agents.standing_tools import build_standing_tools
 from app.agents.state import AgentState, append_proposal, append_structured, set_structured
 from app.agents.supervisor import run_specialist
 from app.agents.toolkit import Tool, ToolArgs, ToolResult, make_tool, obj_schema
@@ -89,6 +90,9 @@ netbanking) - the app renders the steps.
 approval queue, it does NOT send automatically.
 - Coach toward savings goals: check get_savings_goals, and when a customer wants to save \
 for something use create_savings_goal (progress tracks balance growth since the goal was set).
+- Set up recurring saving with setup_standing_instruction (a weekly/monthly auto-transfer toward \
+a goal, an FD, or savings) - it files a proposal for human approval, it does NOT create the \
+transfer directly. Use list_standing_instructions to review existing ones.
 - Use get_spending_insights for 'where did my money go' or category-spend questions - it \
 returns a real monthly breakdown, not a guess.
 Keep replies concrete and encouraging. Customer holds: {held}. Recent context: {mem}.
@@ -254,6 +258,7 @@ def build_tools() -> dict[str, Tool]:
             _get_spending_insights,
         ),
         *build_goal_tools(AGENT_NAME),
+        *build_standing_tools(AGENT_NAME),
         *build_handoff_tools(AGENT_NAME),
     ]
     return {t.name: t for t in tools}

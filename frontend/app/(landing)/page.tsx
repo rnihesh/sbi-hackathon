@@ -9,21 +9,12 @@ import { fadeIn } from "@/lib/motion"
 import { useMe } from "@/lib/auth"
 import { useSignInSheet } from "@/components/auth/sign-in-sheet-context"
 import { SarathiMark } from "@/components/brand/logo"
-
-const HOW_IT_WORKS = [
-  {
-    title: "Chat to open an account",
-    description: "Tell Sarathi what you need - it handles KYC and setup in one conversation.",
-  },
-  {
-    title: "Sarathi watches for what you need",
-    description: "It notices life events and moments that matter, quietly, in the background.",
-  },
-  {
-    title: "You approve, it acts",
-    description: "Every suggestion is yours to accept - nothing happens without your say-so.",
-  },
-]
+import { HowItWorks } from "@/components/landing/how-it-works"
+import { AgentTrio } from "@/components/landing/agent-trio"
+import { FeatureGrid } from "@/components/landing/feature-grid"
+import { TrustGrid } from "@/components/landing/trust-grid"
+import { BankPanel } from "@/components/landing/bank-panel"
+import { FinalCta } from "@/components/landing/final-cta"
 
 export default function LandingPage() {
   const { status } = useMe()
@@ -68,21 +59,12 @@ export default function LandingPage() {
         </motion.div>
       </section>
 
-      <section className="border-t border-border/70">
-        <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6">
-          <ol className="grid gap-8 sm:grid-cols-3">
-            {HOW_IT_WORKS.map((step, index) => (
-              <li key={step.title} className="flex flex-col gap-1.5">
-                <span className="font-mono text-sm text-primary">
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <p className="text-sm font-medium">{step.title}</p>
-                <p className="text-sm text-muted-foreground">{step.description}</p>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
+      <HowItWorks />
+      <AgentTrio />
+      <FeatureGrid />
+      <TrustGrid />
+      <BankPanel />
+      <FinalCta />
     </>
   )
 }

@@ -54,6 +54,7 @@ from app.models.customer import Customer
 from app.models.enums import AgentTriggerType
 from app.models.tracing import AgentRun
 from app.services.goals import evaluate_all_active_goals
+from app.services.standing import execute_due_instructions
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -201,8 +202,9 @@ async def _run_sweep(customer_id: uuid.UUID) -> AgentRunResult:
 async def run_scheduler_tick() -> SweepTickResult:
     """Run exactly one sweep tick. Returns what it did (drive this directly in tests).
 
-    Order of guards: disabled -> record liveness -> budget -> daily cap -> select
-    -> per-customer (kill switch, daily-cap re-check, Redis cooldown) -> run.
+    Order of guards: disabled -> record liveness -> standing instructions (budget
+    independent) -> budget -> daily cap -> select -> per-customer (kill switch,
+    daily-cap re-check, Redis cooldown) -> run.
     """
     settings = get_settings()
     if not settings.scheduler_enabled:
@@ -216,6 +218,13 @@ async def run_scheduler_tick() -> SweepTickResult:
         await redis.set(LAST_TICK_KEY, now.isoformat())
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("scheduler_last_tick_write_failed", error=str(exc))
+
+    # Standing instructions run first and unconditionally (subject only to their own
+    # kill switch): they post real ledger debits with no LLM cost, so neither the
+    # daily budget pause nor the sweep caps below must ever block them. Keeping this
+    # ahead of the budget/daily-cap early returns is what lets recurring auto-transfers
+    # keep firing even on a tick where the LLM sweep is paused for spend.
+    await _execute_standing_instructions(redis)
 
     # Daily LLM budget guard: pause the whole tick quietly when over budget.
     try:
@@ -304,6 +313,29 @@ async def run_scheduler_tick() -> SweepTickResult:
         "scheduler_tick_complete", swept=len(swept), batch=batch, candidates=len(candidates)
     )
     return SweepTickResult(reason="ok", swept=swept)
+
+
+async def _execute_standing_instructions(redis: Redis) -> None:
+    """Run any due standing instructions (recurring auto-transfers).
+
+    DB-only: real ledger debits, no LLM and no spend, so it is deliberately NOT
+    gated by the daily budget or sweep caps - it runs on every enabled tick, even
+    one where the LLM sweep is paused for budget. Its own kill switch
+    (``standing_instructions_enabled``) disables just this sub-step. Guarded exactly
+    like the goal/prune hooks so an execution failure can never destabilise the tick.
+    """
+    if not get_settings().standing_instructions_enabled:
+        logger.debug("scheduler_standing_disabled")
+        return
+    try:
+        sm = get_sessionmaker()
+        async with sm() as session:
+            executed = await execute_due_instructions(session, redis)
+            await session.commit()
+        if executed:
+            logger.info("scheduler_standing_executed", executed=executed)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("scheduler_standing_exec_failed", error=str(exc))
 
 
 def _jittered_interval() -> float:

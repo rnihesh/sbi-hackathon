@@ -31,7 +31,9 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 ## Why this is agentic, not a chatbot
 
 - **Event-driven autonomy** - agents wake on Redis-stream transaction events, not just
-  chat. They act before the customer asks.
+  chat, and act before the customer asks. A third trigger, a proactive scheduler, reviews
+  dormant accounts on a cadence so engagement does not depend on the customer chatting or a
+  transaction streaming in at all.
 - **Tools, not text** - agents open accounts, activate products, draft offers, and send
   email via typed tools against banking services.
 - **Human-in-the-loop** - impactful actions (offers, outreach) become **Proposals** that
@@ -51,6 +53,16 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 - **Measured, not claimed** - a detection scorecard scores life-event detection against the
   simulation's ground truth (precision / recall), with detection trends and proposal-outcome
   analytics in the console.
+- **Retention tools** - a churn cockpit (risk-ranked roster, one-click re-engagement) and a
+  customer 360 view (contacts, accounts, holdings, staff notes, a unified activity timeline)
+  give staff the full picture on one customer.
+- **Money habits** - savings goals tracked against real balance growth, and spending insights
+  (category breakdowns, movers, recurring merchants) computed from real transaction rows.
+- **Memory you control** - durable facts dedup on write (exact match plus embedding
+  similarity), episodic memories decay on a schedule, and a memory page lets a customer forget
+  any single memory or everything at once.
+- **Account control** - a human handoff queue for when a customer asks for a person, revocable
+  active sessions, an account-activity feed, and staff-gated CSV exports (leads, detection).
 - **Budget-governed autonomy** - a daily LLM spend ceiling pauses the event pipeline at the
   cap (user-facing chat is never blocked), alongside request rate limits and a console
   budget-guard view.
@@ -72,7 +84,7 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 +---------------------------------------+-------------------------------------------------+
                                         | REST + SSE (chat streaming, live console feed)
 +---------------------------------------v----------------- backend (FastAPI, Python 3.12) +
-|  api/v1: auth, chat, customers (me), console, events, traces, costs                      |
+|  api/v1: auth, chat, customers (me), console, events, traces, costs                     |
 |  +----------------- agents (LangGraph) ------------------+   +-- services -----------+  |
 |  | Sarathi Core supervisor  (intent -> route -> merge)   |   | email (SES ap-south-1)|  |
 |  | +- Acquisition Agent  (onboarding, KYC, matching)     |   | kyc   (mock verifiers)|  |
@@ -81,7 +93,8 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 |  | shared: memory (pgvector), tools, guardrails, tracing |   +-----------------------+  |
 |  +-------------------------------------------------------+                              |
 |  llm/: router (policy + fallback + cost ledger) -> openai | gemini | anthropic          |
-|  workers/: event_consumer (Redis Streams consumer group, prefilter -> agent -> proposal)|
+|  workers/: event_consumer (Streams: prefilter -> agent -> proposal); scheduler (sweep:  |
+|            dormant-account review, goals, memory pruning)                               |
 |  sim/: persona factory + transaction generator + life-event scripts                     |
 +--------------+--------------------------------------------------+------------------------+
                |                                                  |
@@ -94,6 +107,11 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 -> deterministic prefilter (cheap, rule-based) -> matched rule fires an agent run
 (LangGraph) -> outputs are **Proposals**, never direct impactful actions -> HITL approval
 queue -> approval executes the tool (nudge / email) + writes an audit row.
+
+**Three ways an agent run starts:** a chat message (supervisor routes it live), a transaction
+event (the path above), or the **scheduler** waking on its own cadence with no trigger from
+the customer at all - it reviews dormant accounts, evaluates savings goals, and prunes stale
+memory as DB-only side jobs on every tick.
 
 ---
 
@@ -189,11 +207,17 @@ required for live agent calls.
 | `STAFF_EMAILS` | empty | Console allowlist (comma-separated or JSON array); empty + `dev` = any authed user is staff |
 | `EVENT_COOLDOWN_SECONDS` | `300` | Min gap between agent runs per (customer, rule) |
 | `LLM_DAILY_BUDGET_USD` | `0.25` | Daily spend ceiling (UTC day); event-driven agent runs pause above it, chat is never blocked |
+| `SCHEDULER_ENABLED` | `true` | Master switch for the proactive scheduler's sweep loop |
+| `SWEEP_INTERVAL_SECONDS` | `3600` | Base cadence of the sweep loop (jittered +-10% per tick) |
+| `SWEEP_CUSTOMER_COOLDOWN_DAYS` | `7` | A customer is sweep-eligible only after this many days with no agent run |
+| `SWEEP_BATCH_SIZE` | `3` | Max customers swept per tick |
+| `SWEEP_DAILY_CAP` | `10` | Hard ceiling on sweeps per UTC day |
 
 Model ids (e.g. `OPENAI_MODEL_SMART`), purpose-based provider routing
-(`LLM_PURPOSE_ROUTING`), LLM timeouts, request hardening (`MAX_REQUEST_BYTES`), and JWT/OTP
-TTLs are also configurable; see `backend/app/core/config.py` for the full typed list, and
-`infra/DEPLOY.md` for the dev-vs-prod env-var deltas.
+(`LLM_PURPOSE_ROUTING`), LLM timeouts, request hardening (`MAX_REQUEST_BYTES`), JWT/OTP TTLs,
+and standing-instruction execution limits are also configurable; see
+`backend/app/core/config.py` for the full typed list, and `infra/DEPLOY.md` for the
+dev-vs-prod env-var deltas.
 
 ---
 
@@ -214,7 +238,7 @@ backend/
     workers/           # event_consumer, prefilter, activity
     seed.py            # full-stack DB seeder
   alembic/             # migrations
-  tests/               # 423 tests (agents, api, auth, sim, workers, llm)
+  tests/               # 589 tests (agents, api, auth, sim, workers, scheduler, console, llm)
 frontend/
   app/                 # (landing)/, app/ (customer), console/ (staff)
   components/          # shadcn/ui ported to the Aperture theme
@@ -227,7 +251,7 @@ docker-compose.yml     # dev infra: Postgres (pgvector) + Redis
 
 ## Quality bar
 
-- Backend: `ruff` clean, `mypy --strict` clean, `pytest` (423 tests) green.
+- Backend: `ruff` clean, `mypy --strict` clean, `pytest` (589 tests) green.
 - Frontend: `tsc --noEmit`, `eslint`, and `next build` clean, responsive at 360 / 768 / 1280.
 - No em dashes anywhere (enforced by `make check`).
 - No demo shortcuts: every feature works end to end. Synthetic data is the only data
