@@ -14,9 +14,11 @@ from __future__ import annotations
 import math
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import sqlalchemy as sa
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.embeddings import Embedder, get_embedder
@@ -31,6 +33,26 @@ _RISK_WORDS = {
     "moderate": "medium", "balanced": "medium",
     "aggressive": "high", "high risk": "high", "growth": "high",
 }
+
+# Durable memories (facts/preferences) get a flat score bump so they rank above
+# episodic memories at equal similarity - the things the bank actually knows about
+# a customer should win recall over a stray conversational echo.
+_KIND_BOOST: dict[MemoryKind, float] = {MemoryKind.FACT: 0.1, MemoryKind.PREFERENCE: 0.1}
+
+FACT_DEDUP_THRESHOLD = 0.92
+"""Cosine similarity at/above which a candidate fact counts as a duplicate (skip insert)."""
+
+EPISODIC_RETENTION_DAYS = 90
+"""Episodic memories older than this are eligible for pruning (facts/prefs are kept)."""
+
+EPISODIC_KEEP_RECENT = 200
+"""Always keep at least this many newest episodic memories per customer, any age."""
+
+_PRUNE_MAX_ROWS = 500
+"""Per-call cap on deletes so a large backlog drains over several ticks, never in one."""
+
+_KNOWN_FACTS_LIMIT = 5
+"""How many FACT/PREFERENCE texts are inlined into a specialist's system prompt."""
 
 
 def _coerce_kind(kind: MemoryKind | str) -> MemoryKind:
@@ -114,7 +136,8 @@ async def recall(
         if created.tzinfo is None:
             created = created.replace(tzinfo=UTC)
         age_days = max((now - created).total_seconds() / 86400.0, 0.0)
-        score = similarity * math.exp(-age_days / _DECAY_DAYS)
+        boost = _KIND_BOOST.get(mem.kind, 0.0)
+        score = similarity * math.exp(-age_days / _DECAY_DAYS) + boost
         hits.append(
             MemoryHit(
                 id=mem.id,
@@ -200,3 +223,145 @@ def _derive_risk(customer: Customer, texts: list[str]) -> str | None:
         if phrase in blob:
             return level
     return None
+
+
+# ---------------------------------------------------------------------------
+# Durable facts: dedup-aware insert
+# ---------------------------------------------------------------------------
+
+
+async def remember_fact(
+    session: AsyncSession,
+    customer_id: uuid.UUID,
+    kind: MemoryKind | str,
+    text: str,
+    *,
+    embedder: Embedder | None = None,
+) -> AgentMemory | None:
+    """Store a durable FACT/PREFERENCE unless a near-duplicate already exists.
+
+    Dedup is semantic when an embedder is configured (cosine similarity
+    ``>= FACT_DEDUP_THRESHOLD`` against the customer's existing facts/preferences),
+    with an always-on exact casefold guard as a floor (and the sole check when no
+    embedder is available). Returns the stored row, or ``None`` when skipped as a
+    duplicate or empty.
+    """
+    embedder = embedder or get_embedder()
+    text = " ".join(text.split()).strip()
+    if not text:
+        return None
+    if await _is_duplicate_fact(session, customer_id, text, embedder):
+        return None
+    return await remember(session, customer_id, kind, text, embedder=embedder)
+
+
+async def _is_duplicate_fact(
+    session: AsyncSession, customer_id: uuid.UUID, text: str, embedder: Embedder
+) -> bool:
+    """True if ``text`` duplicates an existing FACT/PREFERENCE for the customer."""
+    norm = text.casefold()
+    existing_texts = list(
+        (
+            await session.scalars(
+                sa.select(AgentMemory.text).where(
+                    AgentMemory.customer_id == customer_id,
+                    AgentMemory.kind.in_([MemoryKind.FACT, MemoryKind.PREFERENCE]),
+                )
+            )
+        ).all()
+    )
+    if any(" ".join(t.split()).casefold() == norm for t in existing_texts):
+        return True
+    if not embedder.available():
+        return False  # exact-text is the only available signal
+
+    qvec = await embedder.embed(text)
+    nearest = await session.scalar(
+        sa.select(AgentMemory.embedding.cosine_distance(qvec))
+        .where(
+            AgentMemory.customer_id == customer_id,
+            AgentMemory.kind.in_([MemoryKind.FACT, MemoryKind.PREFERENCE]),
+            AgentMemory.embedding.is_not(None),
+        )
+        .order_by(AgentMemory.embedding.cosine_distance(qvec))
+        .limit(1)
+    )
+    if nearest is None:
+        return False
+    return (1.0 - float(nearest)) >= FACT_DEDUP_THRESHOLD
+
+
+# ---------------------------------------------------------------------------
+# Decay / pruning (called from the scheduler tick)
+# ---------------------------------------------------------------------------
+
+
+async def prune_memories(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+    keep_recent: int = EPISODIC_KEEP_RECENT,
+    retention_days: int = EPISODIC_RETENTION_DAYS,
+    cap: int = _PRUNE_MAX_ROWS,
+) -> int:
+    """Delete stale EPISODIC memories; keep FACT/PREFERENCE forever.
+
+    A row is pruned iff it is EPISODIC, older than ``retention_days``, AND not among
+    the newest ``keep_recent`` episodic memories for its customer. Deterministic;
+    caps deletes at ``cap`` per call so a large backlog drains over several ticks.
+    Returns the number of rows deleted. Does not commit.
+    """
+    now = now or datetime.now(UTC)
+    cutoff = now - timedelta(days=retention_days)
+
+    ranked = (
+        sa.select(
+            AgentMemory.id.label("id"),
+            AgentMemory.created_at.label("created_at"),
+            sa.func.row_number()
+            .over(
+                partition_by=AgentMemory.customer_id,
+                order_by=AgentMemory.created_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(AgentMemory.kind == MemoryKind.EPISODIC)
+        .subquery()
+    )
+    to_delete = (
+        sa.select(ranked.c.id)
+        .where(ranked.c.rn > keep_recent, ranked.c.created_at < cutoff)
+        .order_by(ranked.c.created_at)
+        .limit(cap)
+    )
+    result = cast(
+        "CursorResult[Any]",
+        await session.execute(sa.delete(AgentMemory).where(AgentMemory.id.in_(to_delete))),
+    )
+    return max(int(result.rowcount), 0)
+
+
+# ---------------------------------------------------------------------------
+# Known-facts directive (inlined into every specialist's system prompt)
+# ---------------------------------------------------------------------------
+
+
+def known_facts_directive(profile: dict[str, object]) -> str:
+    """Render the customer's top facts/preferences as a system-prompt line.
+
+    Returns ``""`` when nothing durable is known, so callers can append
+    unconditionally. Facts lead, then preferences, capped at ``_KNOWN_FACTS_LIMIT``.
+    """
+    facts = _as_text_list(profile.get("facts"))
+    prefs = _as_text_list(profile.get("preferences"))
+    items = (facts + prefs)[:_KNOWN_FACTS_LIMIT]
+    if not items:
+        return ""
+    return "Known about this customer: " + "; ".join(items) + "."
+
+
+def _as_text_list(value: object) -> list[str]:
+    """Coerce a profile value to a list of non-empty strings (defensive on shape)."""
+    if not isinstance(value, list | tuple):
+        return []
+    return [str(v) for v in value if str(v).strip()]

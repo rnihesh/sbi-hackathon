@@ -15,7 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.agents.entrypoints as entrypoints
 from app.llm.base import LLMResponse
+from app.llm.budget import BudgetExceeded
 from app.models.conversation import Conversation, Message
+from app.models.enums import MemoryKind
+from app.models.memory import AgentMemory
 from tests.agents.conftest import FakeRouter, ScriptedHandler, make_response
 from tests.api.conftest import auth_cookies
 
@@ -273,6 +276,136 @@ async def test_second_turn_does_not_regenerate_title(
     assert conv.title == "First Title Here"  # unchanged - dedup on title IS NULL
     # The title LLM was invoked exactly once across both turns.
     assert sum(1 for c in router.calls if c["purpose"] == "chat:title") == 1
+
+
+# ---------------------------------------------------------------------------
+# Durable-fact extraction (fire-and-forget)
+# ---------------------------------------------------------------------------
+
+
+class _OverBudgetRouter(FakeRouter):
+    """FakeRouter whose budget guard trips - chat is untouched, extraction skips."""
+
+    async def raise_if_over_budget(self) -> None:
+        raise BudgetExceeded("daily LLM budget reached")
+
+
+def _facts_router(*, reply: str, facts_json: str, turns: int = 1) -> FakeRouter:
+    """Router scripting ``turns`` smalltalk classifications, one title, and a queue
+    of ``memory:facts`` extraction responses (raw ``{"facts": [...]}`` JSON)."""
+    return FakeRouter(
+        ScriptedHandler(
+            queues={
+                "supervisor:classify": [
+                    make_response('{"intent": "smalltalk"}') for _ in range(turns)
+                ],
+                "chat:title": [make_response('{"title": "A Thread"}') for _ in range(turns)],
+                "memory:facts": [make_response(facts_json) for _ in range(turns)],
+            },
+            default_text=reply,
+        )
+    )
+
+
+async def _drain_facts() -> None:
+    """Await any in-flight fire-and-forget fact-extraction tasks (test determinism)."""
+    pending = [t for t in list(entrypoints._fact_tasks) if not t.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+def _fact_count(router: FakeRouter) -> int:
+    return sum(1 for c in router.calls if (c["purpose"] or "").startswith("memory:facts"))
+
+
+async def _stored_facts(db: AsyncSession, customer_id: Any) -> list[AgentMemory]:
+    rows = await db.scalars(
+        select(AgentMemory).where(
+            AgentMemory.customer_id == customer_id,
+            AgentMemory.kind.in_([MemoryKind.FACT, MemoryKind.PREFERENCE]),
+        )
+    )
+    return list(rows.all())
+
+
+async def test_first_turn_extracts_and_stores_durable_facts(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    install_fake_router: Callable[[Any], None],
+) -> None:
+    user, customer = await make_customer()
+    install_fake_router(
+        _facts_router(
+            reply="Noted, thanks for sharing.",
+            facts_json=(
+                '{"facts": ['
+                '{"fact": "has two kids", "kind": "fact"}, '
+                '{"fact": "is risk-averse", "kind": "preference"}]}'
+            ),
+        )
+    )
+
+    conv_id = await _create_session(client, user)
+    await _send(client, conv_id, "I have two kids and I hate risk", user)
+    await _drain_facts()
+
+    rows = await _stored_facts(db, customer.id)
+    texts = {r.text for r in rows}
+    kinds = {r.kind for r in rows}
+    assert "has two kids" in texts
+    assert "is risk-averse" in texts
+    assert MemoryKind.FACT in kinds
+    assert MemoryKind.PREFERENCE in kinds
+
+
+async def test_fact_extraction_frequency_capped_within_five_turns(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    install_fake_router: Callable[[Any], None],
+) -> None:
+    user, _customer = await make_customer()
+    router = _facts_router(
+        reply="ok",
+        facts_json='{"facts": [{"fact": "works at Infosys", "kind": "fact"}]}',
+        turns=2,
+    )
+    install_fake_router(router)
+
+    conv_id = await _create_session(client, user)
+    await _send(client, conv_id, "turn one", user)
+    await _drain_facts()
+    await _send(client, conv_id, "turn two", user)
+    await _drain_facts()
+
+    # Cap: at most one extraction call per conversation per 5 turns (turn 1 only).
+    assert _fact_count(router) == 1
+
+
+async def test_fact_extraction_skipped_when_over_budget(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    install_fake_router: Callable[[Any], None],
+) -> None:
+    user, customer = await make_customer()
+    handler = ScriptedHandler(
+        queues={
+            "supervisor:classify": [make_response('{"intent": "smalltalk"}')],
+            "chat:title": [make_response('{"title": "A Thread"}')],
+        },
+        default_text="ok",
+    )
+    router = _OverBudgetRouter(handler)
+    install_fake_router(router)
+
+    conv_id = await _create_session(client, user)
+    await _send(client, conv_id, "I have two kids", user)
+    await _drain_facts()  # extraction is a luxury: budget guard trips, it skips
+
+    assert _fact_count(router) == 0
+    assert await _stored_facts(db, customer.id) == []
 
 
 # ---------------------------------------------------------------------------

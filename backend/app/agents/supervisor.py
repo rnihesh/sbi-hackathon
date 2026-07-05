@@ -196,10 +196,16 @@ async def run_specialist(
     if ctx.customer_id is not None:
         profile = await memory.profile_facts(ctx.session, ctx.customer_id)
         memories = await memory.recall(
-            ctx.session, ctx.customer_id, _classify_text(state) or "profile", k=5
+            ctx.session, ctx.customer_id, _classify_text(state) or "profile", k=5,
+            embedder=ctx.embedder,
         )
 
     system = system_builder(ctx, state, profile, memories)
+    # Every specialist run sees the durable facts/preferences the bank knows about
+    # this customer, appended centrally so all three specialists stay in sync.
+    facts_line = memory.known_facts_directive(profile)
+    if facts_line:
+        system = f"{system}\n\n{facts_line}"
     draft = await run_agent_loop(
         ctx,
         state,

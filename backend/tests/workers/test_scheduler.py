@@ -18,12 +18,20 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.workers.scheduler as scheduler
+from app.agents import memory
 from app.core.config import get_settings
 from app.core.redis import get_redis
 from app.llm.budget import BudgetExceeded
 from app.models.banking import Account
 from app.models.customer import Customer
-from app.models.enums import AccountStatus, AccountType, AgentRunStatus, AgentTriggerType
+from app.models.enums import (
+    AccountStatus,
+    AccountType,
+    AgentRunStatus,
+    AgentTriggerType,
+    MemoryKind,
+)
+from app.models.memory import AgentMemory
 from app.models.tracing import AgentRun
 
 # ---------------------------------------------------------------------------
@@ -320,3 +328,37 @@ async def test_health_fields_populated_after_tick(
     last_tick = await scheduler.read_last_tick(redis)
     assert last_tick is not None and last_tick >= before
     assert await scheduler.swept_today_count(redis) == 1
+
+
+# ---------------------------------------------------------------------------
+# 9. Memory maintenance hook prunes stale episodic memories
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_prunes_stale_episodic_memories(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_router(monkeypatch)
+    _stub_runs(monkeypatch)
+    customer = await _add_customer_with_account(db, name="Prunable")
+
+    now = datetime.now(UTC)
+    rows: list[AgentMemory] = []
+    # One row beyond the keep window, every row older than the 90-day cutoff:
+    # exactly the single oldest is prunable.
+    for i in range(memory.EPISODIC_KEEP_RECENT + 1):
+        row = AgentMemory(customer_id=customer.id, kind=MemoryKind.EPISODIC, text=f"ep{i}")
+        row.created_at = now - timedelta(days=100 + i)
+        rows.append(row)
+    db.add_all(rows)
+    await db.commit()
+
+    result = await scheduler.run_scheduler_tick()
+    assert result.reason == "ok"
+
+    remaining = await db.scalar(
+        sa.select(sa.func.count())
+        .select_from(AgentMemory)
+        .where(AgentMemory.customer_id == customer.id)
+    )
+    assert remaining == memory.EPISODIC_KEEP_RECENT  # the oldest one was pruned

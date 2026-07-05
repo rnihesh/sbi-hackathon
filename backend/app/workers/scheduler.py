@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 
 from app.agents.entrypoints import AgentRunResult, run_event_trigger
+from app.agents.memory import prune_memories
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.logging import get_logger
@@ -274,6 +275,17 @@ async def run_scheduler_tick() -> SweepTickResult:
             run_id=result.run_id,
             status=result.status,
         )
+
+    # Memory maintenance: prune stale episodic memories once per tick. DB-only (no
+    # LLM, no spend), tiny, and fully guarded so it can never destabilise the sweep.
+    try:
+        async with sm() as session:
+            pruned = await prune_memories(session)
+            await session.commit()
+        if pruned:
+            logger.info("scheduler_memory_pruned", pruned=pruned)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("scheduler_memory_prune_failed", error=str(exc))
 
     logger.info(
         "scheduler_tick_complete", swept=len(swept), batch=batch, candidates=len(candidates)

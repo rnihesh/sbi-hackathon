@@ -15,6 +15,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.entrypoints import execute_proposal
 from app.core.redis import TXN_EVENTS, get_redis
 from app.models.banking import Account, Transaction
 from app.models.catalog import Holding, Product
@@ -40,6 +41,7 @@ from app.models.enums import (
     TxnDirection,
 )
 from app.models.identity import User
+from app.models.notes import StaffNote
 from app.models.tracing import AgentRun, LlmCall
 from tests.api.conftest import auth_cookies
 
@@ -840,3 +842,343 @@ async def test_customer_timeline_limit_applied_after_merge(
     assert resp.status_code == 200
     items = resp.json()
     assert [item["type"] for item in items] == ["agent_run", "life_event", "proposal"]
+
+
+# ===========================================================================
+# Churn cockpit
+# ===========================================================================
+
+
+async def test_churn_cockpit_requires_staff(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, _customer = await make_customer(email="churn-non-staff@example.com")
+    resp = await client.get("/api/v1/console/churn", cookies=auth_cookies(user))
+    assert resp.status_code == 403
+
+
+async def test_churn_distribution_buckets_and_unscored(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    # `_staff_user` itself creates a Customer row (the staff's own profile) that
+    # sits at the untouched 0.0 default too, so it also counts as "unscored".
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    await make_customer(email="unscored@example.com")
+    await make_customer(email="bucket0@example.com", churn_risk=0.1)
+    await make_customer(email="bucket1@example.com", churn_risk=0.25)
+    await make_customer(email="bucket2@example.com", churn_risk=0.45)
+    await make_customer(email="bucket3@example.com", churn_risk=0.65)
+    await make_customer(email="bucket4@example.com", churn_risk=0.95)
+
+    resp = await client.get("/api/v1/console/churn", cookies=auth_cookies(staff_user))
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["distribution"] == [
+        {"bucket": "0-20", "count": 1},
+        {"bucket": "20-40", "count": 1},
+        {"bucket": "40-60", "count": 1},
+        {"bucket": "60-80", "count": 1},
+        {"bucket": "80-100", "count": 1},
+    ]
+    assert body["unscored"] == 2  # the explicit one above + the staff's own profile
+
+
+async def test_churn_at_risk_ordering_threshold_and_row_shape(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    _u, below = await make_customer(email="below-threshold@example.com", churn_risk=0.59)
+    _u, low_risk = await make_customer(
+        email="at-risk-low@example.com", full_name="At Risk Low", churn_risk=0.6
+    )
+    _u, high_risk = await make_customer(
+        email="at-risk-high@example.com", full_name="At Risk High", churn_risk=0.9
+    )
+
+    now = datetime.now(UTC)
+    account = Account(
+        customer_id=high_risk.id, type=AccountType.SAVINGS,
+        balance_paise=500_000, status=AccountStatus.ACTIVE,
+    )
+    db.add(account)
+    await db.flush()
+    db.add(
+        Transaction(
+            account_id=account.id, ts=now - timedelta(days=2), amount_paise=10_00,
+            direction=TxnDirection.DEBIT, channel=TxnChannel.UPI, balance_after_paise=500_000,
+        )
+    )
+    # 3 nudges within the last 30 days...
+    for _ in range(3):
+        db.add(Nudge(customer_id=high_risk.id, title="n", body="b", status=NudgeStatus.SENT))
+    # ...and 1 stale nudge outside the window, which must not count.
+    stale_nudge = Nudge(customer_id=high_risk.id, title="stale", body="b", status=NudgeStatus.SENT)
+    db.add(stale_nudge)
+    await db.flush()
+    await db.execute(
+        sa.update(Nudge)
+        .where(Nudge.id == stale_nudge.id)
+        .values(created_at=now - timedelta(days=40))
+    )
+
+    low_risk_account = Account(
+        customer_id=low_risk.id, type=AccountType.SAVINGS,
+        balance_paise=100_000, status=AccountStatus.ACTIVE,
+    )
+    db.add(low_risk_account)
+    await db.commit()
+
+    resp = await client.get("/api/v1/console/churn", cookies=auth_cookies(staff_user))
+    assert resp.status_code == 200
+    at_risk = resp.json()["at_risk"]
+
+    ids = [row["id"] for row in at_risk]
+    assert str(below.id) not in ids
+    assert ids == [str(high_risk.id), str(low_risk.id)]  # richest-risk-first
+
+    high_row = at_risk[0]
+    assert high_row["full_name"] == "At Risk High"
+    assert high_row["churn_risk"] == pytest.approx(0.9)
+    assert high_row["balance_paise"] == 500_000
+    assert high_row["nudges_last_30d"] == 3
+    assert high_row["last_activity_at"] is not None
+    assert high_row["reengage_requested"] is False
+
+    low_row = at_risk[1]
+    assert low_row["full_name"] == "At Risk Low"
+    assert low_row["balance_paise"] == 100_000
+    assert low_row["nudges_last_30d"] == 0
+    assert low_row["last_activity_at"] is None
+    assert low_row["reengage_requested"] is False
+
+
+async def test_churn_reengage_creates_pending_proposal_executable_as_nudge(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    _u, customer = await make_customer(email="reengage@example.com", churn_risk=0.8)
+
+    resp = await client.post(
+        f"/api/v1/console/churn/{customer.id}/re-engage", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "pending"
+    proposal_id = body["proposal_id"]
+
+    proposal = await db.get(Proposal, uuid.UUID(proposal_id))
+    assert proposal is not None
+    assert proposal.agent == "staff_console"
+    assert proposal.kind == ProposalKind.NUDGE
+    assert proposal.title == "Re-engagement outreach"
+    assert proposal.status == ProposalStatus.PENDING
+    assert proposal.action["kind"] == "send_nudge"
+    assert proposal.action["source"] == "churn_reengage"
+    assert customer.full_name in proposal.body
+    assert "80%" in proposal.body
+
+    # Roster now reflects the pending ask, not just the 409 on a repeat click.
+    roster_resp = await client.get("/api/v1/console/churn", cookies=auth_cookies(staff_user))
+    roster_row = next(
+        row for row in roster_resp.json()["at_risk"] if row["id"] == str(customer.id)
+    )
+    assert roster_row["reengage_requested"] is True
+
+    # The action kind execute_proposal's dispatcher actually supports - exercise
+    # the real HITL executor, not just the shape of the stored row.
+    result = await execute_proposal(proposal_id, approver=staff_user.email)
+    assert result.status == "executed"
+    assert result.action_kind == "send_nudge"
+
+    nudges = (
+        (await db.execute(sa.select(Nudge).where(Nudge.customer_id == customer.id)))
+        .scalars()
+        .all()
+    )
+    assert len(nudges) == 1
+    assert nudges[0].proposal_id == proposal.id
+
+    notifications = (
+        (
+            await db.execute(
+                sa.select(Notification).where(Notification.customer_id == customer.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(notifications) == 1
+    assert notifications[0].kind == NotificationKind.OFFER
+
+
+async def test_churn_reengage_guard_conflicts_when_pending_exists(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    _u, customer = await make_customer(email="reengage-dupe@example.com", churn_risk=0.7)
+
+    first = await client.post(
+        f"/api/v1/console/churn/{customer.id}/re-engage", cookies=auth_cookies(staff_user)
+    )
+    assert first.status_code == 200
+
+    second = await client.post(
+        f"/api/v1/console/churn/{customer.id}/re-engage", cookies=auth_cookies(staff_user)
+    )
+    assert second.status_code == 409
+
+    proposals = (
+        (await db.execute(sa.select(Proposal).where(Proposal.customer_id == customer.id)))
+        .scalars()
+        .all()
+    )
+    assert len(proposals) == 1
+
+
+async def test_churn_reengage_404_for_unknown_customer(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    resp = await client.post(
+        f"/api/v1/console/churn/{uuid.uuid4()}/re-engage", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 404
+
+
+# ===========================================================================
+# Staff notes
+# ===========================================================================
+
+
+async def test_staff_notes_requires_staff(
+    client: httpx.AsyncClient, make_customer: Callable[..., Any]
+) -> None:
+    user, target = await make_customer(email="notes-non-staff@example.com")
+    resp = await client.get(
+        f"/api/v1/console/customers/{target.id}/notes", cookies=auth_cookies(user)
+    )
+    assert resp.status_code == 403
+
+
+async def test_staff_notes_404_for_unknown_customer(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    resp = await client.get(
+        f"/api/v1/console/customers/{uuid.uuid4()}/notes", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 404
+
+    resp = await client.post(
+        f"/api/v1/console/customers/{uuid.uuid4()}/notes",
+        json={"text": "hello"},
+        cookies=auth_cookies(staff_user),
+    )
+    assert resp.status_code == 404
+
+
+async def test_staff_notes_create_list_newest_first(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    _u, customer = await make_customer(email="notescust@example.com")
+
+    first = await client.post(
+        f"/api/v1/console/customers/{customer.id}/notes",
+        json={"text": "First note"},
+        cookies=auth_cookies(staff_user),
+    )
+    assert first.status_code == 201
+    assert first.json()["author_email"] == staff_user.email
+    assert first.json()["text"] == "First note"
+
+    second = await client.post(
+        f"/api/v1/console/customers/{customer.id}/notes",
+        json={"text": "  Second note  "},
+        cookies=auth_cookies(staff_user),
+    )
+    assert second.status_code == 201
+    assert second.json()["text"] == "Second note"  # whitespace stripped
+
+    resp = await client.get(
+        f"/api/v1/console/customers/{customer.id}/notes", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 200
+    notes = resp.json()
+    assert [n["text"] for n in notes] == ["Second note", "First note"]  # newest first
+
+
+async def test_staff_notes_blank_text_rejected(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    _u, customer = await make_customer(email="notesblank@example.com")
+
+    resp = await client.post(
+        f"/api/v1/console/customers/{customer.id}/notes",
+        json={"text": "   "},
+        cookies=auth_cookies(staff_user),
+    )
+    assert resp.status_code == 422
+
+
+async def test_staff_notes_any_staff_can_delete(
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    author, _sc1 = await make_customer(email="note-author@example.com")
+    other_staff, _sc2 = await make_customer(email="note-other-staff@example.com")
+    set_staff_emails("note-author@example.com,note-other-staff@example.com")
+    _u, customer = await make_customer(email="notesdelcust@example.com")
+
+    note = StaffNote(customer_id=customer.id, author_email=author.email, text="Delete me")
+    db.add(note)
+    await db.commit()
+
+    resp = await client.delete(
+        f"/api/v1/console/notes/{note.id}", cookies=auth_cookies(other_staff)
+    )
+    assert resp.status_code == 204
+
+    # `client`'s delete ran in its own session - `db`'s identity map still holds
+    # the pre-delete `note` from the `add`/`commit` above, so a fresh `select`
+    # (not `db.get`, which would serve the stale cached instance) proves it's
+    # actually gone from the database.
+    remaining = await db.scalar(sa.select(StaffNote.id).where(StaffNote.id == note.id))
+    assert remaining is None
+
+
+async def test_staff_notes_delete_404_for_unknown_note(
+    client: httpx.AsyncClient,
+    make_customer: Callable[..., Any],
+    set_staff_emails: Callable[[str], None],
+) -> None:
+    staff_user, _sc = await _staff_user(make_customer, set_staff_emails)
+    resp = await client.delete(
+        f"/api/v1/console/notes/{uuid.uuid4()}", cookies=auth_cookies(staff_user)
+    )
+    assert resp.status_code == 404
