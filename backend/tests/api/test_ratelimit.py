@@ -109,7 +109,7 @@ async def test_rate_limit_by_user_keys_on_token_not_ip() -> None:
 async def test_otp_send_per_ip_limit_returns_429_envelope(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The added per-IP OTP cap (10/hour) trips a real 429 with the structured
+    """The per-IP OTP cap (30/hour) trips a real 429 with the structured
     envelope + retry metadata, distinct from the handler's generic 200."""
     from app.services import email as email_service
 
@@ -119,7 +119,7 @@ async def test_otp_send_per_ip_limit_returns_429_envelope(
     monkeypatch.setattr("app.api.v1.auth.send_templated", _no_send)
 
     # Distinct emails so the per-email (3/hour) limit never masks the per-IP limit.
-    for i in range(10):
+    for i in range(30):
         resp = await client.post(
             "/api/v1/auth/otp/send", json={"email": f"iprate{i}@example.com"}
         )
