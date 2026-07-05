@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from decimal import Decimal
 from functools import lru_cache
 from time import perf_counter
@@ -58,10 +58,16 @@ class LLMRouter:
         providers: dict[str, LLMProvider] | None = None,
         sessionmaker: async_sessionmaker[AsyncSession] | None = None,
         budget_guard: LlmBudgetGuard | None = None,
+        openai_model_override: Callable[[str], Awaitable[str | None]] | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._sessionmaker = sessionmaker
         self._budget = budget_guard
+        # Optional async reader for a runtime OpenAI model override (tier -> model
+        # id, or None). Injected by the composition root; absent in unit tests,
+        # which then use the statically-built provider chain and never touch
+        # runtime settings / Redis.
+        self._openai_model_override = openai_model_override
         self._timeout = self._settings.llm_timeout_seconds
         self._default_max_tokens = self._settings.llm_default_max_tokens
         self._bg_tasks: set[asyncio.Task[None]] = set()
@@ -145,6 +151,25 @@ class LLMRouter:
         chain.insert(0, (name, model_override or model))
         return chain
 
+    async def _resolve_chain(
+        self, tier_str: str, purpose: str | None
+    ) -> list[tuple[str, str]]:
+        """The tier/purpose chain with any runtime OpenAI model override applied.
+
+        The override (a validated ``gpt-4o``/``gpt-4o-mini`` runtime setting) swaps
+        only the OpenAI entry's model id, leaving provider order and every other
+        provider untouched. When no override reader is wired, or none is set, the
+        statically-built chain is returned as-is (and Redis is never touched)."""
+        chain = self._chain_for(tier_str, purpose)
+        if self._openai_model_override is None:
+            return chain
+        override = await self._openai_model_override(tier_str)
+        if not override:
+            return chain
+        return [
+            (name, override if name == "openai" else model) for name, model in chain
+        ]
+
     async def chat(
         self,
         *,
@@ -163,7 +188,7 @@ class LLMRouter:
         Raises :class:`LLMRouterError` if every configured provider fails.
         """
         tier_str = str(tier)
-        chain = self._chain_for(tier_str, purpose)
+        chain = await self._resolve_chain(tier_str, purpose)
         if not chain:
             raise LLMRouterError(
                 f"no providers with credentials for tier {tier_str!r}; "
@@ -249,7 +274,7 @@ class LLMRouter:
         usage + cost.
         """
         tier_str = str(tier)
-        chain = self._chain_for(tier_str, purpose)
+        chain = await self._resolve_chain(tier_str, purpose)
         if not chain:
             raise LLMRouterError(
                 f"no providers with credentials for tier {tier_str!r}; "
@@ -428,11 +453,17 @@ def get_router() -> LLMRouter:
         from app.llm.fake import FakeLLMRouter
 
         return FakeLLMRouter(settings)
+    from app.core import runtime_settings
     from app.core.redis import get_redis
 
     budget_guard = LlmBudgetGuard(
-        get_redis, Decimal(str(settings.llm_daily_budget_usd))
+        get_redis,
+        Decimal(str(settings.llm_daily_budget_usd)),
+        budget_resolver=runtime_settings.effective_daily_budget_usd,
     )
     return LLMRouter(
-        settings=settings, sessionmaker=get_sessionmaker(), budget_guard=budget_guard
+        settings=settings,
+        sessionmaker=get_sessionmaker(),
+        budget_guard=budget_guard,
+        openai_model_override=runtime_settings.openai_model_override,
     )

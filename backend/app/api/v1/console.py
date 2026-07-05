@@ -31,6 +31,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.agents.actions import create_proposal
 from app.agents.entrypoints import execute_proposal
 from app.agents.guardrails import AuditTrail
+from app.core import runtime_settings
 from app.core.config import get_settings, is_staff_email
 from app.core.db import get_db
 from app.core.errors import ERROR_RING_KEY
@@ -83,6 +84,8 @@ from app.schemas.console import (
     CustomerHoldingProductOut,
     CustomerSearchOut,
     CustomerStatsOut,
+    DemoResetRequest,
+    DemoResetResponse,
     DetectionResponse,
     DetectionRow,
     DetectionSummary,
@@ -106,6 +109,10 @@ from app.schemas.console import (
     ProposalOut,
     ProposalOutcomesResponse,
     ProposalRejectRequest,
+    RuntimeSettingOut,
+    RuntimeSettingPatchRequest,
+    RuntimeSettingPatchResult,
+    RuntimeSettingsResponse,
     SchedulerHealthOut,
     SimInjectEventRequest,
     SimInjectEventResponse,
@@ -598,7 +605,7 @@ async def _llm_budget_today(db: AsyncSession) -> LlmBudgetOut:
             ).where(LlmCall.created_at >= day_start)
         )
     ).one()
-    budget = Decimal(str(get_settings().llm_daily_budget_usd))
+    budget = await runtime_settings.effective_daily_budget_usd()
     cost_today = Decimal(cost or 0)
     return LlmBudgetOut(
         calls_today=int(calls or 0),
@@ -635,7 +642,7 @@ async def _scheduler_health(redis: Any, db: AsyncSession) -> SchedulerHealthOut:
         logger.warning("console_health_scheduler_db_failed", exc_info=True)
         eligible = 0
     return SchedulerHealthOut(
-        enabled=get_settings().scheduler_enabled,
+        enabled=await runtime_settings.scheduler_enabled(),
         last_tick_at=await scheduler.read_last_tick(redis),
         swept_today=await scheduler.swept_today_count(redis),
         next_eligible_estimate=eligible,
@@ -2044,3 +2051,183 @@ async def inject_sim_event(
             "ground_truth": ground_truth.model_dump(mode="json"),
         },
     )
+
+
+# ===========================================================================
+# Runtime settings (operate the system from the console instead of an .env edit
+# + docker restart). A FIXED allowlist of operational knobs only - see
+# `app.core.runtime_settings` for why exactly these five, and where each is read.
+# ===========================================================================
+
+
+def _runtime_setting_out(view: runtime_settings.SettingView) -> RuntimeSettingOut:
+    return RuntimeSettingOut(
+        key=view.key,
+        value=view.value,
+        default=view.default,
+        source=view.source,
+        type=view.type,
+        options=list(view.options) if view.options is not None else None,
+        min=view.min,
+        max=view.max,
+    )
+
+
+@router.get("/settings", response_model=RuntimeSettingsResponse)
+async def get_runtime_settings(staff: StaffUser) -> RuntimeSettingsResponse:
+    """Effective value + provenance (override vs default) + edit metadata for every
+    overridable operational knob."""
+    views = await runtime_settings.describe_all()
+    return RuntimeSettingsResponse(settings=[_runtime_setting_out(v) for v in views])
+
+
+@router.patch("/settings", response_model=RuntimeSettingPatchResult)
+async def patch_runtime_setting(
+    payload: RuntimeSettingPatchRequest,
+    staff: StaffUser,
+    db: AsyncSession = Depends(get_db),
+) -> RuntimeSettingPatchResult:
+    """Set (override) one operational knob. ``key`` is allowlist-validated by the
+    request schema (unknown -> 422); the value is range/enum-validated here.
+    Every change is audit-logged (actor, key, old -> new) via the hash-chained
+    trail before the new effective value is returned."""
+    key = payload.key
+    previous = await runtime_settings.get_override(key)
+    try:
+        new_value = await runtime_settings.set_override(key, payload.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    await AuditTrail().record(
+        db,
+        staff.email,
+        "runtime_setting.updated",
+        "runtime_setting",
+        key,
+        {"old": previous, "new": new_value, "default": runtime_settings.default_value(key)},
+    )
+    await db.commit()
+
+    view = await runtime_settings.describe(key)
+    return RuntimeSettingPatchResult(setting=_runtime_setting_out(view))
+
+
+@router.delete("/settings/{key}", response_model=RuntimeSettingPatchResult)
+async def delete_runtime_setting(
+    key: str, staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> RuntimeSettingPatchResult:
+    """Clear one override so its effective value reverts to the static config
+    default. Unknown key -> 422. The clear is audit-logged."""
+    if not runtime_settings.is_overridable(key):
+        raise HTTPException(status_code=422, detail=f"unknown runtime setting {key!r}")
+
+    previous = await runtime_settings.get_override(key)
+    await runtime_settings.clear_override(key)
+    await AuditTrail().record(
+        db,
+        staff.email,
+        "runtime_setting.cleared",
+        "runtime_setting",
+        key,
+        {"old": previous, "default": runtime_settings.default_value(key)},
+    )
+    await db.commit()
+
+    view = await runtime_settings.describe(key)
+    return RuntimeSettingPatchResult(setting=_runtime_setting_out(view))
+
+
+# ===========================================================================
+# Guarded demo reset (staff + confirm-string double guard). Runs the same logic
+# as `python -m app.seed --reset` from the API: truncate DOMAIN tables (never
+# users/credentials/otp_codes), reseed the 20-persona cohort, and flush the
+# stale Redis event streams + agent/scheduler cooldowns + spend counters so a
+# fresh demo starts from a genuinely clean slate. Safe to run on prod.
+# ===========================================================================
+
+_DEMO_COHORT = 20
+"""The seed cohort size a demo reset reseeds (mirrors `python -m app.seed`)."""
+_DEMO_SEED = 42
+"""Deterministic seed so a reset always reproduces the same demo cohort."""
+_DEMO_MONTHS = 6
+"""Months of transaction history seeded per persona."""
+
+
+async def _flush_demo_redis(redis: Any) -> dict[str, int]:
+    """Delete the Redis state that would otherwise survive a DB truncate and make a
+    fresh demo behave oddly:
+
+    - the ``txn.events`` stream (+ its DLQ) and the ``agent.actions`` feed - stale
+      events/activity from the previous run,
+    - the event-consumer + scheduler per-customer cooldowns and the scheduler's
+      daily-sweep counters - so the reseeded cohort is immediately actionable,
+    - the daily LLM spend counters - kept consistent with the now-empty
+      ``llm_calls`` ledger so the budget guard doesn't stay tripped on phantom spend.
+
+    Returns per-group deleted-key counts. Pattern deletes use ``SCAN`` (never the
+    blocking ``KEYS``)."""
+    from app.llm.budget import SPEND_KEY_PREFIX
+    from app.workers import scheduler as scheduler_module
+
+    counts: dict[str, int] = {}
+    for name in (TXN_EVENTS, TXN_EVENTS_DLQ, AGENT_ACTIONS):
+        try:
+            counts[name] = int(await redis.delete(name))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("demo_reset_redis_delete_failed", key=name, error=str(exc))
+            counts[name] = 0
+
+    patterns = {
+        # event_consumer._cooldown_key: "agent.cooldown:{customer_id}:{rule}"
+        "agent_cooldowns": "agent.cooldown:*",
+        "scheduler_cooldowns": f"{scheduler_module.COOLDOWN_PREFIX}:*",
+        "scheduler_swept": f"{scheduler_module.SWEPT_COUNTER_PREFIX}:*",
+        "llm_spend": f"{SPEND_KEY_PREFIX}:*",
+    }
+    for label, pattern in patterns.items():
+        deleted = 0
+        try:
+            async for redis_key in redis.scan_iter(match=pattern, count=100):
+                deleted += int(await redis.delete(redis_key))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("demo_reset_redis_scan_failed", pattern=pattern, error=str(exc))
+        counts[label] = deleted
+    return counts
+
+
+@router.post("/admin/reset-demo", response_model=DemoResetResponse)
+async def reset_demo(
+    payload: DemoResetRequest, staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> DemoResetResponse:
+    """Destructive: wipe + reseed the demo cohort for a clean run.
+
+    Double-guarded: staff-gated AND the exact confirm token ``RESET`` is required
+    (a wrong/missing token is a 400, before anything is touched). Reuses
+    `app.seed.seed(reset=True)` verbatim - which truncates only the domain tables
+    and never ``users``/``credentials``/``otp_codes`` - so no seeding logic is
+    duplicated here and real login identities are always preserved."""
+    if payload.confirm != "RESET":
+        raise HTTPException(
+            status_code=400, detail='confirm must be exactly "RESET" to reset the demo'
+        )
+
+    from app.seed import seed as run_seed
+
+    summary = await run_seed(
+        cohort=_DEMO_COHORT, seed_value=_DEMO_SEED, months=_DEMO_MONTHS, reset=True
+    )
+    redis_flushed = await _flush_demo_redis(get_redis())
+
+    # Audit AFTER the reseed: seed(reset=True) truncates `audit_logs`, so this row
+    # (re)starts the hash chain from genesis - the first entry of the fresh demo.
+    await AuditTrail().record(
+        db,
+        staff.email,
+        "demo.reset",
+        "system",
+        None,
+        {"reseeded": summary, "redis_flushed": redis_flushed},
+    )
+    await db.commit()
+
+    return DemoResetResponse(reseeded=summary, redis_flushed=redis_flushed)

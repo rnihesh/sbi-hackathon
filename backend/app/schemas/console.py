@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.runtime_settings import RuntimeSettingKey
+
 
 class CustomerSearchOut(BaseModel):
     """One row of the staff customer-search picker (`GET /console/customers`)."""
@@ -514,3 +516,63 @@ class HandoffResolveRequest(BaseModel):
         if not stripped:
             raise ValueError("note must not be blank")
         return stripped
+
+
+# ===========================================================================
+# Runtime settings (`GET/PATCH /console/settings`, `DELETE /console/settings/{key}`)
+# ===========================================================================
+
+
+class RuntimeSettingOut(BaseModel):
+    """The effective state of one runtime-overridable setting, plus the metadata
+    the console needs to render the right control (see `app.core.runtime_settings`).
+
+    ``value`` is the *effective* value (override if set, else the static default);
+    ``source`` says which. ``type``/``options``/``min``/``max`` describe how the
+    value may be edited so the UI never has to hardcode the allowlist."""
+
+    key: str
+    value: bool | float | str
+    default: bool | float | str
+    source: Literal["override", "default"]
+    type: Literal["bool", "float", "enum"]
+    options: list[str] | None = None
+    min: float | None = None
+    max: float | None = None
+
+
+class RuntimeSettingsResponse(BaseModel):
+    settings: list[RuntimeSettingOut]
+
+
+class RuntimeSettingPatchRequest(BaseModel):
+    """A single override write. ``key`` is a ``Literal`` of the fixed allowlist, so
+    an unknown key is rejected as a 422 at request validation - the allowlist is
+    enforced before any handler code runs."""
+
+    key: RuntimeSettingKey
+    value: bool | float | str
+
+
+class RuntimeSettingPatchResult(BaseModel):
+    setting: RuntimeSettingOut
+
+
+# ===========================================================================
+# Guarded demo reset (`POST /console/admin/reset-demo`)
+# ===========================================================================
+
+
+class DemoResetRequest(BaseModel):
+    """The double-guard payload: the literal confirm token must be exactly
+    ``RESET`` (checked in the handler) for the destructive reseed to proceed."""
+
+    confirm: str
+
+
+class DemoResetResponse(BaseModel):
+    """Summary of a completed demo reset: the reseed row counts and the Redis
+    key groups that were flushed."""
+
+    reseeded: dict[str, int]
+    redis_flushed: dict[str, int]

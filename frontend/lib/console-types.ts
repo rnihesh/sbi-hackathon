@@ -544,6 +544,46 @@ export interface HandoffQueue {
 }
 
 // ---------------------------------------------------------------------------
+// Runtime settings - mirrors `app.schemas.console.{RuntimeSettingOut,
+// RuntimeSettingsResponse,RuntimeSettingPatchResult}` (`GET/PATCH
+// /console/settings`, `DELETE /console/settings/{key}`). A fixed allowlist of
+// operational knobs the console can override at runtime (Redis-backed) without
+// a redeploy - see `app/core/runtime_settings.py`.
+// ---------------------------------------------------------------------------
+
+export type RuntimeSettingType = "bool" | "float" | "enum"
+export type RuntimeSettingValue = boolean | number | string
+
+/** One overridable knob: `value` is the effective value (override if set, else
+ * the static default); `source` says which; the remaining fields describe how
+ * the value may be edited so the UI never hardcodes the allowlist. */
+export interface RuntimeSetting {
+  key: string
+  value: RuntimeSettingValue
+  default: RuntimeSettingValue
+  source: "override" | "default"
+  type: RuntimeSettingType
+  options: string[] | null
+  min: number | null
+  max: number | null
+}
+
+export interface RuntimeSettingsResponse {
+  settings: RuntimeSetting[]
+}
+
+export interface RuntimeSettingPatchResult {
+  setting: RuntimeSetting
+}
+
+/** Mirrors `app.schemas.console.DemoResetResponse` (`POST
+ * /console/admin/reset-demo`): reseed row counts + flushed Redis key groups. */
+export interface DemoResetResult {
+  reseeded: Record<string, number>
+  redis_flushed: Record<string, number>
+}
+
+// ---------------------------------------------------------------------------
 // Staff notes - mirrors `app.schemas.console.StaffNoteOut` (customer 360's
 // "notes" card: `GET/POST /console/customers/{id}/notes`, `DELETE
 // /console/notes/{id}`).

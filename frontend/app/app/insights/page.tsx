@@ -131,8 +131,9 @@ export default function InsightsPage() {
                 key={m.month}
                 type="button"
                 onClick={() => setSelectedIndex(idx)}
+                aria-pressed={idx === selectedIndex}
                 className={cn(
-                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   idx === selectedIndex
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-border bg-card text-muted-foreground hover:text-foreground"
@@ -210,7 +211,7 @@ function CategoryBar({ item }: { item: CategoryBreakdown }) {
         </span>
         <span className="flex shrink-0 items-baseline gap-2 font-mono text-xs tabular-nums text-muted-foreground">
           {formatPaise(item.amount_paise)}
-          <span className="text-foreground">{item.share_pct.toFixed(1)}%</span>
+          <span className="text-foreground">{Math.round(item.share_pct)}%</span>
         </span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -251,7 +252,7 @@ function TrendsCard({ trends }: { trends: InsightsTrends }) {
                 {mover.delta_pct !== null && (
                   <span className="ml-1 text-foreground">
                     ({mover.delta_pct >= 0 ? "+" : ""}
-                    {mover.delta_pct}%)
+                    {Math.round(mover.delta_pct)}%)
                   </span>
                 )}
               </span>

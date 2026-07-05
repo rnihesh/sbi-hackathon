@@ -43,6 +43,7 @@ from sqlalchemy import func, select
 
 from app.agents.entrypoints import AgentRunResult, run_event_trigger
 from app.agents.memory import prune_memories
+from app.core import runtime_settings
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.logging import get_logger
@@ -207,7 +208,10 @@ async def run_scheduler_tick() -> SweepTickResult:
     daily-cap re-check, Redis cooldown) -> run.
     """
     settings = get_settings()
-    if not settings.scheduler_enabled:
+    # Effective master switch: a Redis runtime override (set from the console)
+    # takes precedence over the static config, so the loop can be paused live
+    # without a redeploy. Redis down -> falls back to the static flag.
+    if not await runtime_settings.scheduler_enabled():
         logger.debug("scheduler_tick_skipped_disabled")
         return SweepTickResult(reason="disabled")
 
@@ -255,8 +259,9 @@ async def run_scheduler_tick() -> SweepTickResult:
     for customer_id in candidates:
         if len(swept) >= batch:
             break
-        # Kill switch honored mid-tick (re-read the live settings object).
-        if not get_settings().scheduler_enabled:
+        # Kill switch honored mid-tick (re-read the live effective value, so a
+        # console toggle mid-sweep stops it between customers).
+        if not await runtime_settings.scheduler_enabled():
             logger.info("scheduler_kill_switch_mid_tick", swept=len(swept))
             break
         # Daily-cap re-check (defensive against a concurrent instance/tick).
@@ -324,7 +329,7 @@ async def _execute_standing_instructions(redis: Redis) -> None:
     (``standing_instructions_enabled``) disables just this sub-step. Guarded exactly
     like the goal/prune hooks so an execution failure can never destabilise the tick.
     """
-    if not get_settings().standing_instructions_enabled:
+    if not await runtime_settings.standing_instructions_enabled():
         logger.debug("scheduler_standing_disabled")
         return
     try:

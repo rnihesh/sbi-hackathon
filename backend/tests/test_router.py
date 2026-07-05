@@ -119,6 +119,48 @@ def test_tier_selection_respects_available_keys() -> None:
     assert router.available_providers("smart") == ["gemini"]
 
 
+# ===========================================================================
+# Runtime OpenAI model override (a console-set runtime setting resolved per call)
+# ===========================================================================
+
+
+async def test_openai_model_override_swaps_only_openai_model() -> None:
+    openai = FakeProvider("openai")
+    gemini = FakeProvider("gemini")
+
+    async def override(_tier: str) -> str | None:
+        return "gpt-4o"
+
+    router = LLMRouter(
+        settings=_settings(),
+        providers={"openai": openai, "gemini": gemini},
+        openai_model_override=override,
+    )
+
+    resp = await router.chat(tier="smart", messages=MESSAGES)
+    assert resp.provider == "openai"
+    assert resp.model == "gpt-4o"  # the static "gpt-4.1" was overridden
+    assert openai.calls[0]["model"] == "gpt-4o"
+
+
+async def test_openai_model_override_noop_when_unset_uses_static_model() -> None:
+    openai = FakeProvider("openai")
+    settings = _settings()
+
+    async def override(_tier: str) -> str | None:
+        return None
+
+    router = LLMRouter(
+        settings=settings,
+        providers={"openai": openai},
+        openai_model_override=override,
+    )
+
+    resp = await router.chat(tier="fast", messages=MESSAGES)
+    # No override set -> the statically-configured fast model is used unchanged.
+    assert resp.model == settings.openai_model_fast
+
+
 def test_no_keys_means_empty_chain() -> None:
     router = LLMRouter(settings=_settings())
     assert router.available_providers("smart") == []

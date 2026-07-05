@@ -90,7 +90,7 @@ export function HandoffCard({
       exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.16 } }}
       transition={springSoft}
     >
-      <Card className={cn(isHigh && "border-primary/60")}>
+      <Card className={cn(isHigh && "border border-primary/60")}>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">

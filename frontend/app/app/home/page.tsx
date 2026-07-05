@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { ArrowDownLeft, ArrowUpRight, Bell, ChevronRight, Sparkles, TrendingUp } from "lucide-react"
+import { ArrowDownLeft, ArrowUpRight, Bell, ChevronRight, TrendingUp } from "lucide-react"
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
@@ -13,12 +13,11 @@ import { formatPaise, formatRelativeTime, humanizeIdentifier, timeOfDayGreeting 
 import { categoryIcon } from "@/lib/category-icons"
 import type { DashboardResponse } from "@/lib/customer-types"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { SarathiMark } from "@/components/brand/logo"
 import { GoalsSection } from "@/components/customer/goals-section"
 import { StandingInstructionsSection } from "@/components/customer/standing-instructions-section"
 import { HomeSkeleton } from "@/components/customer/home-skeleton"
+import { WelcomeCard } from "@/components/customer/welcome-card"
 
 export default function HomePage() {
   const { me } = useMe()
@@ -102,34 +101,10 @@ export default function HomePage() {
             </motion.div>
           ) : (
             <motion.div variants={staggerItem}>
-              <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-4 py-16 text-center">
-                <SarathiMark className="size-8 text-primary" />
-                <div>
-                  <p className="text-sm font-medium">No accounts yet</p>
-                  <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
-                    Open your first account in a 5-minute conversation.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <Button asChild size="sm">
-                    <Link href="/app/chat">Chat with Sarathi</Link>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    disabled={loadingDemo}
-                    onClick={() => void handleLoadDemoActivity()}
-                  >
-                    <Sparkles className="size-3.5" />
-                    {loadingDemo ? "Loading…" : "Load demo activity"}
-                  </Button>
-                </div>
-                <p className="max-w-xs text-xs text-muted-foreground">
-                  Demo activity fills your account with 6 months of realistic synthetic
-                  transactions so you can see every feature working.
-                </p>
-              </div>
+              <WelcomeCard
+                loadingDemo={loadingDemo}
+                onLoadDemoActivity={() => void handleLoadDemoActivity()}
+              />
             </motion.div>
           )}
 

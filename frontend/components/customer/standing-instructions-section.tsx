@@ -17,7 +17,7 @@ import {
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
-import { formatPaise, humanizeIdentifier } from "@/lib/format"
+import { formatDateShort, formatPaise, humanizeIdentifier } from "@/lib/format"
 import { springSoft } from "@/lib/motion"
 import type {
   DashboardAccount,
@@ -61,14 +61,6 @@ const CADENCE_OPTIONS: { value: Cadence; label: string }[] = [
   { value: "monthly", label: "Monthly" },
   { value: "weekly", label: "Weekly" },
 ]
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  })
-}
 
 function purposeLabel(si: StandingInstruction): string {
   if (si.purpose === "goal") return si.goal_name ?? "Savings goal"
@@ -279,7 +271,7 @@ function InstructionRow({
               {" · "}
               <span className="inline-flex items-center gap-1 align-middle">
                 <CalendarDays className="size-3" />
-                Next {formatDate(si.next_run_date)}
+                Next {formatDateShort(si.next_run_date)}
               </span>
             </>
           )}
@@ -340,8 +332,9 @@ function Segmented<T extends string>({
         <button
           key={opt.value}
           type="button"
+          aria-pressed={value === opt.value}
           onClick={() => onChange(opt.value)}
-          className={`flex-1 rounded-md px-2 py-1 text-sm font-medium transition-colors ${
+          className={`flex-1 rounded-md px-2 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset ${
             value === opt.value
               ? "bg-primary text-primary-foreground"
               : "text-muted-foreground hover:text-foreground"

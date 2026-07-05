@@ -6,7 +6,7 @@ import { CalendarDays, MoreVertical, PartyPopper, Plus, Target } from "lucide-re
 import { toast } from "sonner"
 
 import { api, API_V1, ApiError, describeApiError } from "@/lib/api"
-import { formatPaise } from "@/lib/format"
+import { formatDateShort, formatPaise } from "@/lib/format"
 import { springSoft } from "@/lib/motion"
 import type { Goal, GoalListResponse } from "@/lib/customer-types"
 import { useFocusReturn } from "@/lib/use-focus-return"
@@ -32,14 +32,6 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 
 const NAME_MAX = 80
-
-function formatTargetDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  })
-}
 
 /**
  * Savings goals surface on the customer home. Progress is honest (see the API's
@@ -266,7 +258,7 @@ function GoalCard({
       exit={{ opacity: 0, height: 0, transition: { duration: 0.18 } }}
       transition={springSoft}
     >
-      <Card className={achieved ? "border-primary/30 bg-accent" : undefined}>
+      <Card className={achieved ? "border border-primary/30 bg-accent" : undefined}>
         <CardContent className="flex flex-col gap-3">
           <div className="flex items-start justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
@@ -313,7 +305,7 @@ function GoalCard({
               {goal.target_date && !achieved && (
                 <span className="flex items-center gap-1 text-muted-foreground">
                   <CalendarDays className="size-3" />
-                  {formatTargetDate(goal.target_date)}
+                  {formatDateShort(goal.target_date)}
                 </span>
               )}
               <span className="font-medium text-foreground">{Math.round(pct)}%</span>

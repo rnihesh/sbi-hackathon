@@ -49,12 +49,19 @@ function saveDraft(id: string | null, text: string): void {
   }
 }
 
-const SUGGESTIONS = [
-  "Open a savings account",
+/** Suggestions shown once, everyone gets these. */
+const BASE_SUGGESTIONS = [
   "What can I invest in?",
   "Show me how to set up UPI",
   "What's my account balance?",
 ]
+
+/** Default (and anonymous-visitor) suggestion set - pins "Open a savings
+ * account" first since most people landing on an empty chat haven't opened
+ * one yet. Swapped for `BASE_SUGGESTIONS` once we positively know the
+ * customer already has an account, so the suggestion never reads as
+ * irrelevant. */
+const SUGGESTIONS_WITH_ACCOUNT_OPEN = ["Open a savings account", ...BASE_SUGGESTIONS]
 
 function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -85,6 +92,10 @@ export default function ChatPage() {
   const [restoring, setRestoring] = React.useState(true)
   const [historyOpen, setHistoryOpen] = React.useState(false)
   const [sessions, setSessions] = React.useState<ChatSessionSummary[] | null>(null)
+  // Only known once (a) there's no customer profile at all yet (definitely
+  // zero accounts, no fetch needed) or (b) the dashboard confirms one exists -
+  // gates which suggestion set the empty-chat state below shows.
+  const [hasAccounts, setHasAccounts] = React.useState(false)
 
   const abortControllerRef = React.useRef<AbortController | null>(null)
   const scrollRef = React.useRef<HTMLDivElement>(null)
@@ -130,6 +141,30 @@ export default function ChatPage() {
       })
       .finally(() => setRestoring(false))
   }, [])
+
+  // Whether the empty-chat suggestions should pin "Open a savings account"
+  // first (default) or drop it (customer already has one) - see SUGGESTIONS_*.
+  React.useEffect(() => {
+    if (!me?.customer) {
+      setHasAccounts(false)
+      return
+    }
+    let cancelled = false
+    api
+      .get<{ accounts: unknown[] }>(`${API_V1}/me/dashboard`)
+      .then((res) => {
+        if (!cancelled) setHasAccounts(res.accounts.length > 0)
+      })
+      .catch(() => {
+        // Unknown - keep the default (safe) suggestion set rather than guessing.
+      })
+    return () => {
+      cancelled = true
+    }
+    // Depend on the stable id, not the `customer` object reference (which
+    // changes on every `/me` refresh even when the id doesn't).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.customer?.id])
 
   React.useEffect(() => {
     if (autoScrollRef.current) {
@@ -499,7 +534,7 @@ export default function ChatPage() {
               I&apos;m Sarathi, your banker. Open an account, explore products, or ask anything.
             </p>
             <div className="flex flex-wrap justify-center gap-2">
-              {SUGGESTIONS.map((suggestion) => (
+              {(hasAccounts ? BASE_SUGGESTIONS : SUGGESTIONS_WITH_ACCOUNT_OPEN).map((suggestion) => (
                 <button
                   key={suggestion}
                   type="button"

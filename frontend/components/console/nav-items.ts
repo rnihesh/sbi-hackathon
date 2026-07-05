@@ -9,6 +9,7 @@ import {
   Sparkles,
   Waypoints,
   Wallet,
+  Sliders,
   type LucideIcon,
 } from "lucide-react"
 
@@ -29,4 +30,5 @@ export const CONSOLE_NAV_ITEMS: ConsoleNavItem[] = [
   { href: "/console/life-events", label: "Life Events", icon: Sparkles },
   { href: "/console/traces", label: "Traces", icon: Waypoints },
   { href: "/console/costs", label: "Costs", icon: Wallet },
+  { href: "/console/settings", label: "Settings", icon: Sliders },
 ]

@@ -103,6 +103,13 @@ export function formatTimeOfDay(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })
 }
 
+/** Renders an absolute calendar date as "5 Jul 2026" - goal target dates,
+ * auto-transfer run dates, and anywhere else a short, unambiguous date (not a
+ * relative one) is called for. */
+export function formatDateShort(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+}
+
 export function timeOfDayGreeting(now: Date = new Date()): string {
   const hour = now.getHours()
   if (hour < 5) return "Still up"
