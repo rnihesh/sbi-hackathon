@@ -474,3 +474,51 @@ export interface ProposalOutcomesResponse {
   avg_decision_seconds: number | null
   by_agent: ProposalAgentRow[]
 }
+
+// ---------------------------------------------------------------------------
+// Churn cockpit - mirrors `app.schemas.console.{ChurnBucketOut,
+// ChurnAtRiskCustomerOut,ChurnCockpitResponse,ChurnReengageResult}`
+// (`GET /console/churn`, `POST /console/churn/{id}/re-engage`).
+// ---------------------------------------------------------------------------
+
+export type ChurnBucketLabel = "0-20" | "20-40" | "40-60" | "60-80" | "80-100"
+
+export interface ChurnBucket {
+  bucket: ChurnBucketLabel
+  count: number
+}
+
+export interface ChurnAtRiskCustomer {
+  id: string
+  full_name: string
+  churn_risk: number
+  last_activity_at: string | null
+  balance_paise: number
+  nudges_last_30d: number
+  reengage_requested: boolean
+}
+
+export interface ChurnCockpitResponse {
+  distribution: ChurnBucket[]
+  at_risk: ChurnAtRiskCustomer[]
+  unscored: number
+}
+
+export interface ChurnReengageResult {
+  proposal_id: string
+  status: string
+}
+
+// ---------------------------------------------------------------------------
+// Staff notes - mirrors `app.schemas.console.StaffNoteOut` (customer 360's
+// "notes" card: `GET/POST /console/customers/{id}/notes`, `DELETE
+// /console/notes/{id}`).
+// ---------------------------------------------------------------------------
+
+export interface StaffNote {
+  id: string
+  customer_id: string
+  author_email: string
+  text: string
+  created_at: string
+}

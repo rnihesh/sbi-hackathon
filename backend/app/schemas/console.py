@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CustomerSearchOut(BaseModel):
@@ -399,3 +399,72 @@ class ProposalOutcomesResponse(BaseModel):
     executed: int
     avg_decision_seconds: float | None
     by_agent: list[ProposalAgentRow]
+
+
+# ===========================================================================
+# Churn cockpit (`GET /console/churn`, `POST /console/churn/{id}/re-engage`)
+# ===========================================================================
+
+ChurnBucketLabel = Literal["0-20", "20-40", "40-60", "60-80", "80-100"]
+
+
+class ChurnBucketOut(BaseModel):
+    """One risk band's customer count for the distribution bars."""
+
+    bucket: ChurnBucketLabel
+    count: int
+
+
+class ChurnAtRiskCustomerOut(BaseModel):
+    """One row of the at-risk roster (`churn_risk >= 0.6`), richest-first."""
+
+    id: uuid.UUID
+    full_name: str
+    churn_risk: float
+    last_activity_at: datetime | None
+    balance_paise: int
+    nudges_last_30d: int
+    # Whether a pending re-engagement proposal already exists for this customer
+    # (see `_CHURN_REENGAGE_SOURCE`) - lets the "Request re-engagement" button
+    # render as already-requested on a fresh page load, not just after a 409.
+    reengage_requested: bool
+
+
+class ChurnCockpitResponse(BaseModel):
+    distribution: list[ChurnBucketOut]
+    at_risk: list[ChurnAtRiskCustomerOut]
+    # Customers whose `churn_risk` is still the untouched 0.0 default - the
+    # engagement agent's `score_churn` tool has never reviewed them. See the
+    # docstring on `get_churn_cockpit` for why this is a sentinel-value read
+    # rather than a real NULL check.
+    unscored: int
+
+
+class ChurnReengageResult(BaseModel):
+    proposal_id: uuid.UUID
+    status: str
+
+
+# ===========================================================================
+# Staff notes (`GET/POST /console/customers/{id}/notes`, `DELETE /console/notes/{id}`)
+# ===========================================================================
+
+
+class StaffNoteOut(BaseModel):
+    id: uuid.UUID
+    customer_id: uuid.UUID
+    author_email: str
+    text: str
+    created_at: datetime
+
+
+class StaffNoteCreateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("text")
+    @classmethod
+    def _strip_and_require_nonblank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("text must not be blank")
+        return stripped

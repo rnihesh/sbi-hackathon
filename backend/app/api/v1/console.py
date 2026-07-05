@@ -20,12 +20,13 @@ from decimal import Decimal
 from typing import Annotated, Any
 
 import orjson
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
+from app.agents.actions import create_proposal
 from app.agents.entrypoints import execute_proposal
 from app.agents.guardrails import AuditTrail
 from app.core.config import get_settings, is_staff_email
@@ -51,13 +52,20 @@ from app.models.enums import (
     HoldingStatus,
     LeadStage,
     NudgeStatus,
+    ProposalKind,
     ProposalStatus,
 )
 from app.models.identity import User
+from app.models.notes import StaffNote
 from app.models.sim_injection import SimInjection
 from app.models.tracing import AgentRun, AgentStep, LlmCall
 from app.schemas.console import (
     AcquisitionFunnel,
+    ChurnAtRiskCustomerOut,
+    ChurnBucketLabel,
+    ChurnBucketOut,
+    ChurnCockpitResponse,
+    ChurnReengageResult,
     ConsoleErrorsResponse,
     ConsoleHealthResponse,
     CostBreakdownRow,
@@ -92,6 +100,8 @@ from app.schemas.console import (
     SchedulerHealthOut,
     SimInjectEventRequest,
     SimInjectEventResponse,
+    StaffNoteCreateRequest,
+    StaffNoteOut,
     TimelineItemOut,
     TimeseriesPoint,
     TimeseriesResponse,
@@ -406,6 +416,92 @@ async def get_customer_timeline(
 
     items.sort(key=lambda item: item.ts, reverse=True)
     return items[:limit]
+
+
+# ===========================================================================
+# Staff notes (customer 360's "notes" card - kept out of the timeline above:
+# a note is a staff observation, not something that happened)
+# ===========================================================================
+
+
+@router.get("/customers/{customer_id}/notes", response_model=list[StaffNoteOut])
+async def list_staff_notes(
+    customer_id: uuid.UUID, staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> list[StaffNoteOut]:
+    exists = await db.scalar(select(Customer.id).where(Customer.id == customer_id))
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    notes = (
+        (
+            await db.execute(
+                select(StaffNote)
+                .where(StaffNote.customer_id == customer_id)
+                .order_by(StaffNote.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        StaffNoteOut(
+            id=n.id,
+            customer_id=n.customer_id,
+            author_email=n.author_email,
+            text=n.text,
+            created_at=n.created_at,
+        )
+        for n in notes
+    ]
+
+
+@router.post(
+    "/customers/{customer_id}/notes", response_model=StaffNoteOut, status_code=201
+)
+async def create_staff_note(
+    customer_id: uuid.UUID,
+    payload: StaffNoteCreateRequest,
+    staff: StaffUser,
+    db: AsyncSession = Depends(get_db),
+) -> StaffNoteOut:
+    exists = await db.scalar(select(Customer.id).where(Customer.id == customer_id))
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    note = StaffNote(customer_id=customer_id, author_email=staff.email, text=payload.text)
+    db.add(note)
+    await db.flush()
+    await AuditTrail().record(
+        db, staff.email, "note.created", "staff_note", str(note.id),
+        {"customer_id": str(customer_id)},
+    )
+    await db.commit()
+    return StaffNoteOut(
+        id=note.id,
+        customer_id=note.customer_id,
+        author_email=note.author_email,
+        text=note.text,
+        created_at=note.created_at,
+    )
+
+
+@router.delete("/notes/{note_id}", status_code=204)
+async def delete_staff_note(
+    note_id: uuid.UUID, staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """Delete a staff note. Any staff member may delete any note - this is a
+    small internal team tool, not a per-author-owned record."""
+    note = await db.get(StaffNote, note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    await AuditTrail().record(
+        db, staff.email, "note.deleted", "staff_note", str(note.id),
+        {"customer_id": str(note.customer_id)},
+    )
+    await db.delete(note)
+    await db.commit()
+    return Response(status_code=204)
 
 
 # ===========================================================================
@@ -1302,6 +1398,267 @@ async def analytics_proposals(
             for agent, created, approved, rejected in agent_rows
         ],
     )
+
+
+# ===========================================================================
+# Churn cockpit
+# ===========================================================================
+#
+# `Customer.churn_risk` is a NOT NULL float defaulting to 0.0 - there is no real
+# null state in the schema. A customer the engagement agent's `score_churn` tool
+# has never reviewed simply stays at that untouched 0.0 default, so "unscored"
+# below reads that sentinel value rather than a real NULL check. `score_churn`
+# blends a deterministic feature score with an LLM read (`0.6*base + 0.4*llm`),
+# so a *reviewed* customer landing on exactly 0.0 is possible but vanishingly
+# rare - the honest caveat the frontend surfaces next to the count.
+
+_CHURN_AT_RISK_THRESHOLD = 0.6
+_CHURN_AT_RISK_LIMIT = 50
+_CHURN_REENGAGE_SOURCE = "churn_reengage"
+_CHURN_NUDGE_LOOKBACK_DAYS = 30
+
+_CHURN_BUCKET_LABELS: tuple[ChurnBucketLabel, ...] = (
+    "0-20", "20-40", "40-60", "60-80", "80-100",
+)
+
+
+async def _churn_distribution(db: AsyncSession) -> list[ChurnBucketOut]:
+    """Bucket *scored* customers (`churn_risk > 0`, see module note above) into 5
+    risk bands with one `func.count().filter(...)` per bucket in a single scan
+    (mirrors `get_funnels`'s holdings-by-category breakdown)."""
+    scored = Customer.churn_risk > 0.0
+    row = (
+        await db.execute(
+            select(
+                func.count().filter(scored, Customer.churn_risk < 0.2),
+                func.count().filter(
+                    scored, Customer.churn_risk >= 0.2, Customer.churn_risk < 0.4
+                ),
+                func.count().filter(
+                    scored, Customer.churn_risk >= 0.4, Customer.churn_risk < 0.6
+                ),
+                func.count().filter(
+                    scored, Customer.churn_risk >= 0.6, Customer.churn_risk < 0.8
+                ),
+                func.count().filter(scored, Customer.churn_risk >= 0.8),
+            ).select_from(Customer)
+        )
+    ).one()
+    return [
+        ChurnBucketOut(bucket=label, count=int(count))
+        for label, count in zip(_CHURN_BUCKET_LABELS, row, strict=True)
+    ]
+
+
+async def _churn_at_risk(db: AsyncSession) -> list[ChurnAtRiskCustomerOut]:
+    """At-risk roster (`churn_risk >= 0.6`), richest-risk-first, with last
+    activity, total balance, and recent-nudge count each joined from a
+    per-customer aggregate subquery - one query regardless of roster size."""
+    last_activity_subq = (
+        select(
+            Account.customer_id.label("customer_id"),
+            func.max(Transaction.ts).label("last_activity_at"),
+        )
+        .join(Transaction, Transaction.account_id == Account.id)
+        .group_by(Account.customer_id)
+        .subquery()
+    )
+    balance_subq = (
+        select(
+            Account.customer_id.label("customer_id"),
+            func.sum(Account.balance_paise).label("balance_paise"),
+        )
+        .group_by(Account.customer_id)
+        .subquery()
+    )
+    since = datetime.now(UTC) - timedelta(days=_CHURN_NUDGE_LOOKBACK_DAYS)
+    nudges_subq = (
+        select(Nudge.customer_id.label("customer_id"), func.count().label("nudges_30d"))
+        .where(Nudge.created_at >= since)
+        .group_by(Nudge.customer_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Customer.id,
+            Customer.full_name,
+            Customer.churn_risk,
+            last_activity_subq.c.last_activity_at,
+            func.coalesce(balance_subq.c.balance_paise, 0),
+            func.coalesce(nudges_subq.c.nudges_30d, 0),
+        )
+        .outerjoin(last_activity_subq, last_activity_subq.c.customer_id == Customer.id)
+        .outerjoin(balance_subq, balance_subq.c.customer_id == Customer.id)
+        .outerjoin(nudges_subq, nudges_subq.c.customer_id == Customer.id)
+        .where(Customer.churn_risk >= _CHURN_AT_RISK_THRESHOLD)
+        .order_by(Customer.churn_risk.desc())
+        .limit(_CHURN_AT_RISK_LIMIT)
+    )
+    rows = (await db.execute(stmt)).all()
+
+    # Which of these customers already have a pending re-engagement ask - one
+    # extra query, not N+1, so a fresh page load renders "Requested" correctly
+    # instead of only learning it from a 409 after a duplicate click.
+    pending_reengage_ids = set(
+        (
+            await db.scalars(
+                select(Proposal.customer_id).where(
+                    Proposal.status == ProposalStatus.PENDING,
+                    Proposal.action["source"].astext == _CHURN_REENGAGE_SOURCE,
+                )
+            )
+        ).all()
+    )
+
+    return [
+        ChurnAtRiskCustomerOut(
+            id=cid,
+            full_name=full_name,
+            churn_risk=churn_risk,
+            last_activity_at=last_activity_at,
+            balance_paise=int(balance_paise),
+            nudges_last_30d=int(nudges_30d),
+            reengage_requested=cid in pending_reengage_ids,
+        )
+        for cid, full_name, churn_risk, last_activity_at, balance_paise, nudges_30d in rows
+    ]
+
+
+@router.get("/churn", response_model=ChurnCockpitResponse)
+async def get_churn_cockpit(
+    staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> ChurnCockpitResponse:
+    """Churn cockpit: risk distribution, the at-risk roster, and how many
+    customers the engagement agent hasn't scored yet (see module note above)."""
+    distribution = await _churn_distribution(db)
+    at_risk = await _churn_at_risk(db)
+    unscored = (
+        await db.scalar(
+            select(func.count()).select_from(Customer).where(Customer.churn_risk == 0.0)
+        )
+        or 0
+    )
+    return ChurnCockpitResponse(
+        distribution=distribution, at_risk=at_risk, unscored=int(unscored)
+    )
+
+
+async def _customer_activity_stats(
+    db: AsyncSession, customer_id: uuid.UUID
+) -> tuple[datetime | None, int, int]:
+    """``(last_activity_at, balance_paise, nudges_last_30d)`` for one customer -
+    the single-customer counterpart of `_churn_at_risk`'s bulk joins, used to
+    write the re-engagement proposal's factual body below."""
+    account_ids = select(Account.id).where(Account.customer_id == customer_id).scalar_subquery()
+    last_activity_at = await db.scalar(
+        select(func.max(Transaction.ts)).where(Transaction.account_id.in_(account_ids))
+    )
+    balance_paise = (
+        await db.scalar(
+            select(func.coalesce(func.sum(Account.balance_paise), 0)).where(
+                Account.customer_id == customer_id
+            )
+        )
+        or 0
+    )
+    since = datetime.now(UTC) - timedelta(days=_CHURN_NUDGE_LOOKBACK_DAYS)
+    nudges_30d = (
+        await db.scalar(
+            select(func.count())
+            .select_from(Nudge)
+            .where(Nudge.customer_id == customer_id, Nudge.created_at >= since)
+        )
+        or 0
+    )
+    return last_activity_at, int(balance_paise), int(nudges_30d)
+
+
+def _format_inr(paise: int) -> str:
+    return f"Rs {paise / 100:,.0f}"
+
+
+def _churn_reengage_body(
+    full_name: str,
+    churn_risk: float,
+    last_activity_at: datetime | None,
+    balance_paise: int,
+    nudges_last_30d: int,
+) -> str:
+    """Staff-authored template text (no LLM call) - every figure is read
+    straight from the customer's own row, so the copy stays strictly factual."""
+    risk_pct = round(churn_risk * 100)
+    if last_activity_at is not None:
+        days_inactive = max(0, (datetime.now(UTC) - last_activity_at).days)
+        activity_clause = f"last transacted {days_inactive} day(s) ago"
+    else:
+        activity_clause = "has no recorded transactions"
+    return (
+        f"{full_name} carries a churn risk score of {risk_pct}% and {activity_clause}. "
+        f"Current balance on file: {_format_inr(balance_paise)}. "
+        f"{nudges_last_30d} nudge(s) sent in the last 30 days with no recorded conversion. "
+        "Staff-requested re-engagement outreach - please reach out personally to check in "
+        "and understand their needs before they leave."
+    )
+
+
+@router.post("/churn/{customer_id}/re-engage", response_model=ChurnReengageResult)
+async def request_churn_reengagement(
+    customer_id: uuid.UUID, staff: StaffUser, db: AsyncSession = Depends(get_db)
+) -> ChurnReengageResult:
+    customer = await db.get(Customer, customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    existing = await db.scalar(
+        select(Proposal.id)
+        .where(
+            Proposal.customer_id == customer_id,
+            Proposal.status == ProposalStatus.PENDING,
+            Proposal.action["source"].astext == _CHURN_REENGAGE_SOURCE,
+        )
+        .limit(1)
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A re-engagement proposal is already pending for this customer",
+        )
+
+    last_activity_at, balance_paise, nudges_30d = await _customer_activity_stats(
+        db, customer_id
+    )
+    body = _churn_reengage_body(
+        customer.full_name, customer.churn_risk, last_activity_at, balance_paise, nudges_30d
+    )
+
+    proposal = await create_proposal(
+        db,
+        customer_id=customer.id,
+        agent="staff_console",
+        kind=ProposalKind.NUDGE,
+        title="Re-engagement outreach",
+        # `kind: send_nudge` is one of `app.agents.actions.EXECUTABLE_ACTION_KINDS` -
+        # `execute_proposal` dispatches it straight to `create_nudge` on approval.
+        # `source` is this endpoint's own marker (not read by the executor) so the
+        # 409 guard above can recognise "already has a pending re-engagement ask".
+        body=body,
+        action={"kind": "send_nudge", "source": _CHURN_REENGAGE_SOURCE},
+    )
+    await AuditTrail().record(
+        db, staff.email, "proposal.created", "proposal", str(proposal.id),
+        {"kind": "send_nudge", "source": _CHURN_REENGAGE_SOURCE},
+    )
+    await db.commit()
+
+    await publish_activity(
+        get_redis(),
+        type="proposal",
+        customer_id=customer.id,
+        summary=f"Re-engagement proposal requested by {staff.email}",
+        ref_id=proposal.id,
+    )
+    return ChurnReengageResult(proposal_id=proposal.id, status=proposal.status.value)
 
 
 # ===========================================================================

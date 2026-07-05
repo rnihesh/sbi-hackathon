@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { motion } from "framer-motion"
-import { ArrowLeft, Bell, FileCheck, Mail, MapPin, Phone, Sparkles } from "lucide-react"
+import { ArrowLeft, Bell, FileCheck, Mail, MapPin, Phone, Sparkles, UserMinus } from "lucide-react"
 
 import { api, API_V1, ApiError } from "@/lib/api"
 import {
@@ -26,6 +26,7 @@ import type {
 } from "@/lib/console-types"
 import { SarathiMark } from "@/components/brand/logo"
 import { IntentScoreBar } from "@/components/console/intent-score-bar"
+import { StaffNotesCard } from "@/components/console/staff-notes-card"
 import { StatTile } from "@/components/console/stat-tile"
 import { TraceStatusBadge } from "@/components/console/trace-status-badge"
 import { Badge } from "@/components/ui/badge"
@@ -33,6 +34,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
 const TIMELINE_LIMIT = 50
+// Mirrors `_CHURN_AT_RISK_THRESHOLD` in `app.api.v1.console` - the same bar
+// that puts a customer on the churn cockpit's at-risk roster.
+const CHURN_COCKPIT_THRESHOLD = 0.6
 
 function proposalStatusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
   if (status === "executed") return "default"
@@ -232,7 +236,7 @@ export default function CustomerDetailPage() {
   }, [params.customerId])
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-5xl">
       <button
         type="button"
         onClick={() => router.back()}
@@ -301,6 +305,15 @@ export default function CustomerDetailPage() {
             <div className="w-full shrink-0 sm:w-40">
               <p className="mb-1 text-xs text-muted-foreground">Churn risk</p>
               <IntentScoreBar score={detail.customer.churn_risk} />
+              {detail.customer.churn_risk >= CHURN_COCKPIT_THRESHOLD && (
+                <Link
+                  href="/console/churn"
+                  className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 decoration-primary/40 hover:text-foreground hover:underline"
+                >
+                  <UserMinus className="size-3" />
+                  View churn cockpit
+                </Link>
+              )}
             </div>
           </div>
 
@@ -312,77 +325,87 @@ export default function CustomerDetailPage() {
             <StatTile label="Life events" value={formatCount(detail.stats.life_events)} />
           </div>
 
-          <div className="mb-6 grid gap-4 sm:grid-cols-2">
-            <Card size="sm">
-              <CardHeader>
-                <CardTitle>Accounts</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2.5">
-                {detail.accounts.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No accounts on file.</p>
-                ) : (
-                  detail.accounts.map((account, i) => (
-                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
-                      <span className="capitalize">{humanizeIdentifier(account.type)}</span>
-                      <span className="font-mono tabular-nums">
-                        {formatPaise(account.balance_paise)}
-                      </span>
-                      <Badge variant="outline" className="shrink-0 capitalize">
-                        {account.status}
-                      </Badge>
-                    </div>
-                  ))
-                )}
-              </CardContent>
-            </Card>
-
-            <Card size="sm">
-              <CardHeader>
-                <CardTitle>Holdings</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2.5">
-                {detail.holdings.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No holdings yet.</p>
-                ) : (
-                  detail.holdings.map((holding, i) => (
-                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium">{holding.product.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {humanizeIdentifier(holding.product.category)}
-                        </p>
-                      </div>
-                      <Badge variant="outline" className="shrink-0 capitalize">
-                        {holding.status}
-                      </Badge>
-                    </div>
-                  ))
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          <h2 className="mb-3 text-sm font-semibold">Activity timeline</h2>
-          {timeline === null ? (
-            <TimelineSkeleton />
-          ) : timeline.length === 0 ? (
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border py-16 text-center">
-              <p className="text-sm text-muted-foreground">No activity recorded yet.</p>
+          {/* Below the stat tiles on mobile (single column, source order);
+              becomes the right column on desktop via explicit grid placement. */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <div className="lg:col-start-3 lg:row-start-1 lg:row-span-2">
+              <StaffNotesCard customerId={params.customerId} />
             </div>
-          ) : (
-            <motion.ol
-              variants={staggerContainer}
-              initial="initial"
-              animate="animate"
-              className="relative flex flex-col gap-6 border-l border-border pl-6"
-            >
-              {timeline.map((item, i) => (
-                <motion.li key={i} variants={staggerItem} className="relative">
-                  <TimelineRowContent item={item} />
-                </motion.li>
-              ))}
-            </motion.ol>
-          )}
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2 lg:col-start-1 lg:row-start-1">
+              <Card size="sm">
+                <CardHeader>
+                  <CardTitle>Accounts</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2.5">
+                  {detail.accounts.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No accounts on file.</p>
+                  ) : (
+                    detail.accounts.map((account, i) => (
+                      <div key={i} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="capitalize">{humanizeIdentifier(account.type)}</span>
+                        <span className="font-mono tabular-nums">
+                          {formatPaise(account.balance_paise)}
+                        </span>
+                        <Badge variant="outline" className="shrink-0 capitalize">
+                          {account.status}
+                        </Badge>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card size="sm">
+                <CardHeader>
+                  <CardTitle>Holdings</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2.5">
+                  {detail.holdings.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No holdings yet.</p>
+                  ) : (
+                    detail.holdings.map((holding, i) => (
+                      <div key={i} className="flex items-center justify-between gap-2 text-sm">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{holding.product.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {humanizeIdentifier(holding.product.category)}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="shrink-0 capitalize">
+                          {holding.status}
+                        </Badge>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="lg:col-span-2 lg:col-start-1 lg:row-start-2">
+              <h2 className="mb-3 text-sm font-semibold">Activity timeline</h2>
+              {timeline === null ? (
+                <TimelineSkeleton />
+              ) : timeline.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border py-16 text-center">
+                  <p className="text-sm text-muted-foreground">No activity recorded yet.</p>
+                </div>
+              ) : (
+                <motion.ol
+                  variants={staggerContainer}
+                  initial="initial"
+                  animate="animate"
+                  className="relative flex flex-col gap-6 border-l border-border pl-6"
+                >
+                  {timeline.map((item, i) => (
+                    <motion.li key={i} variants={staggerItem} className="relative">
+                      <TimelineRowContent item={item} />
+                    </motion.li>
+                  ))}
+                </motion.ol>
+              )}
+            </div>
+          </div>
         </>
       )}
     </div>

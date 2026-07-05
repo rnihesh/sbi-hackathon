@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from app.models.engagement import LifeEvent, Notification, Nudge, Proposal
     from app.models.identity import User
     from app.models.memory import AgentMemory
+    from app.models.notes import StaffNote
     from app.models.tracing import AgentRun
 
 
@@ -89,3 +90,6 @@ class Customer(UUIDPKMixin, TimestampMixin, Base):
         back_populates="customer", cascade="all, delete-orphan"
     )
     leads: Mapped[list[Lead]] = relationship(back_populates="customer")
+    staff_notes: Mapped[list[StaffNote]] = relationship(
+        back_populates="customer", cascade="all, delete-orphan"
+    )
