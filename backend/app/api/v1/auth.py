@@ -660,7 +660,7 @@ _OTP_INVALID_MESSAGE = "Invalid or expired code"
     # Per-email limit (3/hour) already lives in the handler and keeps a generic 200;
     # this adds a per-IP cap (10/hour) to stop one host churning through many emails
     # to fan out spam/enumeration. Crossing it is a real 429 (not the generic 200).
-    dependencies=[Depends(rate_limit("otp_send_ip", limit=10, window_seconds=3600, key="by_ip"))],
+    dependencies=[Depends(rate_limit("otp_send_ip", limit=30, window_seconds=3600, key="by_ip"))],
 )
 async def otp_send(
     payload: OtpSendRequest, db: AsyncSession = Depends(get_db)

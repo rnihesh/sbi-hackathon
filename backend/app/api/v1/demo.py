@@ -198,7 +198,7 @@ def _clear_demo_pollution(customer: Customer) -> bool:
     # Heavy: months of synthetic history + a fast-tier LLM flavour call + a burst of
     # real events. 2/hour per user is ample for a genuine reload, absurd for abuse.
     dependencies=[
-        Depends(rate_limit("demo_activity", limit=2, window_seconds=3600, key="by_user"))
+        Depends(rate_limit("demo_activity", limit=10, window_seconds=3600, key="by_user"))
     ],
 )
 async def load_demo_activity(

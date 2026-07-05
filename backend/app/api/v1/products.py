@@ -237,7 +237,7 @@ constraining the path param rejects junk before any DB lookup."""
     # Creates a real HITL proposal + a notification. 10/hour per user stops a client
     # from spamming the review queue while leaving room for genuine multi-product apps.
     dependencies=[
-        Depends(rate_limit("product_apply", limit=10, window_seconds=3600, key="by_user"))
+        Depends(rate_limit("product_apply", limit=40, window_seconds=3600, key="by_user"))
     ],
 )
 async def apply_for_product(

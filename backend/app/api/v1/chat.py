@@ -188,7 +188,7 @@ async def _publish_chat_activity(customer_id: str | None, done_event: dict[str, 
     "/sessions/{conversation_id}/messages",
     # Every turn is an LLM call (real money). 20/min per signed-in user, or per IP
     # for anonymous prospects, throttles a runaway client without hurting a human.
-    dependencies=[Depends(rate_limit("chat_messages", limit=20, window_seconds=60, key="by_user"))],
+    dependencies=[Depends(rate_limit("chat_messages", limit=60, window_seconds=60, key="by_user"))],
 )
 async def post_chat_message(
     conversation_id: str,
