@@ -56,8 +56,10 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 - **Retention tools** - a churn cockpit (risk-ranked roster, one-click re-engagement) and a
   customer 360 view (contacts, accounts, holdings, staff notes, a unified activity timeline)
   give staff the full picture on one customer.
-- **Money habits** - savings goals tracked against real balance growth, and spending insights
-  (category breakdowns, movers, recurring merchants) computed from real transaction rows.
+- **Money habits** - savings goals tracked against real balance growth, spending insights
+  (category breakdowns, movers, recurring merchants) computed from real transaction rows, and
+  standing instructions: recurring auto-transfers the scheduler executes against the ledger
+  (no-overdraw guarded, progress-neutral goal accounting, set up conversationally through HITL).
 - **Memory you control** - durable facts dedup on write (exact match plus embedding
   similarity), episodic memories decay on a schedule, and a memory page lets a customer forget
   any single memory or everything at once.
@@ -66,6 +68,9 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 - **Budget-governed autonomy** - a daily LLM spend ceiling pauses the event pipeline at the
   cap (user-facing chat is never blocked), alongside request rate limits and a console
   budget-guard view.
+- **Operated from the console** - staff toggle the scheduler and standing instructions, adjust
+  the daily budget, and switch model tiers live (no restart) from a console settings page, with
+  every change audit-logged; a guarded demo-reset reseeds the synthetic cohort in one click.
 - **Provider-agnostic** - a thin multi-provider LLM router (OpenAI / Gemini / Anthropic)
   with policy tiers (cheap model for classification, strong for dialogue), automatic
   fallback, and a per-request cost ledger. Self-hosted models are pluggable for data
@@ -77,6 +82,46 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
 ---
 
 ## Architecture
+
+```mermaid
+flowchart TB
+  subgraph FE["Frontend - Next.js 15, PWA, responsive"]
+    CA["Customer app<br/>chat, home, goals, insights, products"]
+    BC["Bank console<br/>feed, approvals, analytics, traces, settings"]
+  end
+  API["FastAPI - REST + Server-Sent Events"]
+  subgraph MESH["LangGraph agent mesh - Sarathi Core supervisor"]
+    AQ["Acquisition<br/>onboarding, KYC"]
+    AD["Adoption<br/>dormancy, nudges"]
+    EN["Engagement<br/>life events, churn"]
+    GR["Guardrails<br/>PII redaction, policy, hash-chained audit"]
+    MEM["Memory<br/>pgvector: facts, dedup, decay"]
+  end
+  LLM["Multi-provider LLM router<br/>fast + smart tiers, fallback, cost ledger, daily budget guard"]
+  OA(["OpenAI"])
+  GE(["Gemini"])
+  AN(["Anthropic"])
+  WK["Workers<br/>event_consumer + scheduler"]
+  PG[("Postgres 16 + pgvector")]
+  RD[("Redis 7 Streams")]
+  SIM["Synthetic-India simulation<br/>(or real core-banking feed)"]
+
+  FE -->|REST + SSE| API
+  API -->|1 chat| MESH
+  MESH --> LLM
+  LLM --> OA & GE & AN
+  SIM --> RD
+  RD -->|2 event| WK
+  WK -->|3 scheduled sweep| MESH
+  MESH -. proposals .-> BC
+  MESH --- MEM
+  MEM --- PG
+  API --- PG
+  WK --- RD
+```
+
+<details>
+<summary>Same topology as plain-text ASCII</summary>
 
 ```
 +--------------------------- frontend (Next.js 15, App Router) ---------------------------+
@@ -102,6 +147,8 @@ per-customer memory (episodic vector + structured profile facts), and enforces g
     (relational + episodic vectors,                         txn.events, agent.actions;
      LangGraph checkpoints, cost ledger)                    cooldowns, rate limits)
 ```
+
+</details>
 
 **Event path:** `sim/runner` (or console inject) -> `txn.events` stream -> `event_consumer`
 -> deterministic prefilter (cheap, rule-based) -> matched rule fires an agent run
@@ -238,7 +285,7 @@ backend/
     workers/           # event_consumer, prefilter, activity
     seed.py            # full-stack DB seeder
   alembic/             # migrations
-  tests/               # 589 tests (agents, api, auth, sim, workers, scheduler, console, llm)
+  tests/               # 603 tests (agents, api, auth, sim, workers, scheduler, console, llm)
 frontend/
   app/                 # (landing)/, app/ (customer), console/ (staff)
   components/          # shadcn/ui ported to the Aperture theme
@@ -251,7 +298,7 @@ docker-compose.yml     # dev infra: Postgres (pgvector) + Redis
 
 ## Quality bar
 
-- Backend: `ruff` clean, `mypy --strict` clean, `pytest` (589 tests) green.
+- Backend: `ruff` clean, `mypy --strict` clean, `pytest` (603 tests) green.
 - Frontend: `tsc --noEmit`, `eslint`, and `next build` clean, responsive at 360 / 768 / 1280.
 - No em dashes anywhere (enforced by `make check`).
 - No demo shortcuts: every feature works end to end. Synthetic data is the only data
