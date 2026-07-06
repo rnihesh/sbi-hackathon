@@ -56,6 +56,22 @@ def _from_header() -> str:
     return f"Sarathi <{settings.ses_from_address}>"
 
 
+# Reserved, guaranteed-undeliverable domains (RFC 2606 / RFC 6761). Synthetic
+# sim personas use `@sarathi-sim.example` / `@sarathi-prospect.example`, so a real
+# SES send to them ALWAYS hard-bounces and drives up the account bounce rate. We
+# never hand these to SES: the send is skipped (sent=False), no bounce is ever
+# generated. Real customer domains (Gmail via OAuth, etc.) are unaffected.
+_UNDELIVERABLE_TLDS = (".example", ".invalid", ".test", ".localhost", ".local")
+_UNDELIVERABLE_DOMAINS = ("example.com", "example.net", "example.org")
+
+
+def is_undeliverable(to: str) -> bool:
+    domain = to.rsplit("@", 1)[-1].strip().lower()
+    if domain in _UNDELIVERABLE_DOMAINS:
+        return True
+    return any(domain == tld[1:] or domain.endswith(tld) for tld in _UNDELIVERABLE_TLDS)
+
+
 def _text_fallback(html: str) -> str:
     """Small HTML->text fallback for the multipart body (no extra dependency)."""
     text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", html)
@@ -82,6 +98,12 @@ async def send_email(to: str, subject: str, html: str, text: str) -> EmailResult
     settings = get_settings()
     if not (settings.aws_access_key_id and settings.aws_secret_access_key):
         raise EmailNotConfigured("AWS SES credentials are not configured")
+
+    # Never send to reserved/undeliverable domains (synthetic sim personas). A
+    # real SES send would hard-bounce and hurt the account's sender reputation.
+    if is_undeliverable(to):
+        logger.info("email_skipped_undeliverable", to=to)
+        return EmailResult(sent=False, message_id=None)
 
     session = aioboto3.Session()
     async with session.client(

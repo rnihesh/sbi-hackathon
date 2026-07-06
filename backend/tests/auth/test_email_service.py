@@ -81,7 +81,7 @@ async def test_send_templated_renders_subject_from_context(monkeypatch: pytest.M
     monkeypatch.setattr(email_service, "send_email", _fake_send_email)
 
     result = await email_service.send_templated(
-        "to@example.com",
+        "to@realmail.co",
         "nudge",
         {
             "full_name": "Asha",
@@ -91,7 +91,7 @@ async def test_send_templated_renders_subject_from_context(monkeypatch: pytest.M
             "cta_label": None,
         },
     )
-    assert captured["to"] == "to@example.com"
+    assert captured["to"] == "to@realmail.co"
     assert captured["subject"] == "Renew your FD"
     assert "Renew your FD" in captured["html"]
     assert result.sent is True
@@ -138,14 +138,14 @@ async def test_send_email_calls_ses_with_expected_params(monkeypatch: pytest.Mon
     fake_client = _FakeSesClient()
     monkeypatch.setattr(aioboto3, "Session", lambda: _FakeSession(fake_client))
 
-    result = await email_service.send_email("to@example.com", "Subject!", "<p>hi</p>", "hi")
+    result = await email_service.send_email("to@realmail.co", "Subject!", "<p>hi</p>", "hi")
 
     assert result.sent is True
     assert result.message_id == "fake-message-id"
     assert len(fake_client.calls) == 1
     call = fake_client.calls[0]
     assert call["FromEmailAddress"] == "Sarathi <no-reply@niheshr.com>"
-    assert call["Destination"] == {"ToAddresses": ["to@example.com"]}
+    assert call["Destination"] == {"ToAddresses": ["to@realmail.co"]}
     assert call["Content"]["Simple"]["Subject"]["Data"] == "Subject!"
     assert call["Content"]["Simple"]["Body"]["Html"]["Data"] == "<p>hi</p>"
     assert call["Content"]["Simple"]["Body"]["Text"]["Data"] == "hi"
